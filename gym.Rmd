@@ -1,0 +1,840 @@
+---
+title: "Gym Members"
+author: "Youssef Benslimane, Ahmad Alobaid, Seyed Amirhossein Mosaddad"
+date: "`r Sys.Date()`"
+bibliography: references.bib  
+link-citations: true  # This makes the citations clickable
+output: 
+  pdf_document:
+    keep_tex: true
+    latex_engine: xelatex
+    number_sections: true
+    toc: true
+    toc_depth: 3
+header-includes:
+  - \usepackage{setspace}
+  - \setstretch{1.5}  
+  - \usepackage{geometry}
+  - \geometry{margin=1in}
+abstract: "
+Misinformation and unverified (or even false) assumptions about fitness metrics and demographic relations are consumed and shared among fitness enthusiasts and the general public. This study examines key fitness metrics and demographic factors using a comprehensive dataset containing fitness metrics and demographic data from 973 gym members. The data includes vital workout performance indicators such as heart rate, calories burned, and session duration, along with demographic details and fitness experience levels. By examining key variables like age, gender, body fat percentage, and workout frequency, this report aims to uncover patterns in exercise habits, fitness progression, and explore the relationships between physiological, behavioral, and workout-related factors. This analysis provides valuable insights for fitness enthusiasts, health researchers, and data scientists, contributing to a deeper understanding of fitness dynamics and individual health trends. \ \\clearpage "
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, wrap=TRUE, comment=NA)
+```
+
+\newpage
+
+# Introduction
+
+Physical fitness is a critical component of health, directly influencing well-being and quality of life. As gym membership and fitness engagement have surged in recent years, there is increasing interest in understanding how personal and physiological factors impact workout performance and health outcomes. This report analyzes the Gym Members' Fitness Dataset, which offers a detailed overview of fitness metrics for 973 individuals, focusing on workout types, health indicators, and demographic attributes.
+
+The dataset includes a variety of variables that provide a multifaceted view of each member's fitness profile. Key features such as maximum and average heart rate during workouts, calories burned, and workout duration serve as indicators of exercise intensity and endurance. Additionally, attributes like age, weight, body fat percentage, and BMI (Body Mass Index) allow for an in-depth exploration of health patterns and how they correlate with exercise habits.
+
+The main objectives of this analysis are:
+
+-   To identify trends and patterns in workout intensity and duration across different demographics.
+-   To explore the relationship between physiological attributes and fitness metrics.
+-   To assess how experience levels influence workout frequency, intensity, and health outcomes.
+
+# Dataset Description
+
+The dataset titled "Gym Members' Fitness Dataset" contains 973 records and 15 variables, each representing an individual gym member's workout details, physical attributes, and key health metrics, @gym_members_exercise_dataset. The dataset is structured to allow analysis of various aspects of physical fitness, from workout intensity to overall health indicators. We enumerate them as follows:
+
+## Quantitative Variables
+
+These variables capture numerical information that can be analyzed to assess fitness metrics and health indicators. 
+
+1.  **Age**: Age of the gym member in years.
+2.  **Weight (kg)**: Member’s weight in kilograms, which affects workout intensity and calorie expenditure.
+3.  **Height (m)**: Member’s height in meters, used with weight to calculate BMI.
+4.  **Max_BPM**: Maximum beats per minute (BPM) during workout sessions, reflecting peak heart rate.
+5.  **Avg_BPM**: Average heart rate during workout sessions, indicating sustained workout intensity.
+6.  **Resting_BPM**: Heart rate before exercise, providing a baseline for cardiovascular fitness.
+7.  **Session_Duration (hours)**: Duration of each workout session in hours, indicating workout length.
+8.  **Calories_Burned**: Total calories burned per workout session, a key indicator of energy expenditure.
+9.  **Fat_Percentage**: Body fat percentage, indicating body composition and fitness level.
+10. **Water_Intake (liters)**: Liters of water consumed during workouts, related to hydration and recovery.
+11. **BMI**: Body Mass Index, calculated from height and weight, used to assess health risk and body composition.
+
+## Binary Variables
+
+Binary variables take one of two possible values, indicating the presence or absence of a characteristic, or belonging to a group or a category:
+
+1. **Gender**: Indicates the gender of the gym member (Male or Female).
+2. **Activity**: Represents the member’s regular participation level. It is a binary variable with the value 1 means that the person is active (goes to the gym at least 3 times a week) and 0 otherwise. This is an artificial variable created from the **Workout_Frequency** variable in the original dataset, which represents the number of times the participant goes to the gym (per week).
+
+
+## Multiclass Categorical Variables
+
+Categorical variables contain discrete categories or groups that classify each gym member:
+
+1. **Workout_Type**: Type of workout performed by the member, with categories including Cardio, Strength, Yoga, and HIIT (High-Intensity Interval Training).
+2. **Experience_Level**: Self-reported experience level of the member, where:\
+*1 = Beginner* \
+*2 = Intermediate* \
+*3 = Expert* 
+
+<!--
+## Dimensions 
+Here we show the number of raws and columns for the row and the cleaned data.
+-->
+```{r Load-libraries, include=TRUE}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(moments)
+library(knitr)
+library(tidyr)
+library(GGally)
+library(corrplot)
+library(viridis)
+library(scales) 
+library(kableExtra)
+```
+
+```{r DBLoad, include=TRUE, results=FALSE}
+
+# Load the dataset
+data <- read.csv("gym_members_updated.csv")
+
+colnames(data)[which(colnames(data) == "Weight..kg.")] <- "Wt"
+colnames(data)[which(colnames(data) == "Height..m.")] <- "Ht"
+colnames(data)[which(colnames(data) == "Water_Intake..liters.")] <- "Water"
+colnames(data)[which(colnames(data) == "Session_Duration..hours.")] <- "Session"
+
+# Check for missing values and remove rows with NA
+#sum(is.na(data))
+data_clean <- na.omit(data)
+
+# Select and rename variables
+data_clean <- data_clean %>%
+  dplyr::select(Age, Wt, Ht, Max_BPM, Avg_BPM, Resting_BPM, 
+         Gender, Calories_Burned, Workout_Type, Experience_Level, 
+         Fat_Percentage, Water, Session, BMI, Activity) %>%
+  rename(
+    MaxHR = Max_BPM,
+    AvgHR = Avg_BPM,
+    RestHR = Resting_BPM,
+    CBurn = Calories_Burned,
+    WType = Workout_Type,
+    XP = Experience_Level,
+    FatPct = Fat_Percentage
+  )
+
+# Convert necessary variables to factors for categorical data
+data_clean$Activity <- as.factor(data_clean$Activity)
+data_clean$Gender <- as.factor(data_clean$Gender)
+data_clean$WType <- as.factor(data_clean$WType)
+data_clean$XP <- as.factor(data_clean$XP)
+
+# Get number of rows and columns
+rows_raw <- nrow(data)
+col_raw <- ncol(data)
+col_cleaned <- ncol(data_clean)
+rows_cleaned <- nrow(data_clean)
+
+# Print the results
+print(paste("Number of columns of raw data is:", col_raw, "and number of rows of raw data is:", rows_raw ))
+
+print(paste("Number of columns of cleaned data is:", col_cleaned, "and number of rows of cleaned data is:", rows_cleaned ))
+
+```
+# Correlation Matrix and Inter-correlation Analysis
+
+```{r distributions, include=TRUE}
+# Select quantitative variables
+quantitative_vars <- data_clean %>%
+  dplyr :: select(Age, Wt, Ht, MaxHR, AvgHR, RestHR, FatPct, Water,Session, CBurn, BMI)
+
+# Summary statistics of quantitative variables
+summary_stats <- data.frame(
+  Mean = sapply(quantitative_vars, mean, na.rm = TRUE),
+  Median = sapply(quantitative_vars, median, na.rm = TRUE),
+  SD = sapply(quantitative_vars, sd, na.rm = TRUE),
+  Min = sapply(quantitative_vars, min, na.rm = TRUE),
+  Max = sapply(quantitative_vars, max, na.rm = TRUE)
+)
+
+# Transpose the table for easier viewing
+summary_stats <- t(summary_stats)
+summary_stats <- round(as.data.frame(summary_stats), 2)
+
+# Display the transposed summary statistics table
+kable(summary_stats, caption = "Statistics of Quantitative Variables")
+```
+
+From the initial analysis we can see that:
+
+**1. Demographic & Physical Characteristics**
+
+The membership primarily consists of adults, with a mean age of 38.68 years, and spans a wide age range from 18 to 59, demonstrating a diverse age representation. The standard deviation of 12.18 years highlights a broad age distribution among members. Body measurements vary significantly, with an average weight of 73.85 kg and a large standard deviation of 21.21 kg, indicating diverse body types. Heights range from 1.50m to 2.00m, with a mean height of 1.72m. The average BMI of 24.91 falls within the "normal" range, although BMI values span from 12.32 to 49.84, reflecting a wide range in body composition, including underweight and overweight members.
+
+**2. Workout Performance**
+
+Members demonstrate healthy cardiovascular fitness, as evidenced by an average resting heart rate (RestHR) of 62.22 BPM, with a relatively low standard deviation (7.33), indicating consistent baseline fitness levels. During workouts, the average heart rate is 143.77 BPM, while the maximum heart rate averages 179.88 BPM, suggesting moderate to high-intensity sessions. Sessions typically last 1.26 hours (around 75 minutes), with a consistent duration across members (SD: 0.34). Calorie burning per session averages 905.42 calories, with a substantial range from 303 to 1783 calories, pointing to varying workout intensities (SD: 272.64).
+
+**3. Body Composition & Hydration**
+
+The average body fat percentage is 24.98%, with a range of 10-35%, reflecting diverse fitness levels. The standard deviation of 6.26% indicates significant variation in body fat percentages. Hydration habits are consistent, with an average water intake of 2.63L per session (SD: 0.60L). The range of 1.5-3.7L suggests that members are hydrating.
+
+```{r corr, include=TRUE, results=FALSE}
+
+intercorrelations <- function(quantitative_vars) {
+  R <- cor(quantitative_vars, use = "complete.obs")
+  
+  lambda <- eigen(R)$values
+  p <- ncol(R)
+  
+  rjj <- diag(solve(R))
+  
+  q1 <- (1 - min(lambda) / max(lambda))^(p + 2)
+  q2 <- 1 - p / sum(1 / lambda)
+  q3 <- 1 - sqrt(det(R))
+  q4 <- (max(lambda) / p)^(3 / 2)
+  q5 <- (1 - min(lambda) / p)^5
+  q6 <- sum((1 - 1 / rjj) / p)
+  
+  q <- c(q1, q2, q3, q4, q5, q6)
+  names(q) <- c("q1", "q2", "q3", "q4", "q5", "q6")
+  
+  return(q)
+}
+
+q_values <- intercorrelations(quantitative_vars)
+print(q_values)
+```
+
+**1. Overall Correlation Strength:**
+
+-   ***q3 = 0.989 (determinant-based measure):***
+
+The very high value, close to 1, indicates strong overall correlations among the variables. This suggests strong interdependence within the dataset, potentially leading to multicollinearity.
+
+**2. Eigenvalue-Based Measures:**
+
+-   ***q1 = 0.973 (condition number-based):***
+
+This high value reflects a substantial spread in eigenvalues, indicating structured relationships among the variables.
+
+-   ***q2 = 0.954 (average eigenvalue deviation):***
+
+Another high value that confirms the presence of a strong overall correlation structure, reinforcing that the variables are not independent.
+
+-   ***q4 = 0.137 (maximum eigenvalue measure):***
+
+The low value here highlights distinct or unique relationships for some variables, suggesting that a portion of the variables maintain independence despite the strong overall correlation.
+
+-   ***q5 = 0.997 (minimum eigenvalue measure):***
+
+This extremely high value indicates near-linear dependencies, pointing to possible redundancies within some variables.
+
+**3. Variable Independence:**
+
+-   ***q6 = 0.652 (inverse correlation measure):***
+
+The moderate value suggests that while there is a significant degree of correlation, some variables still retain unique information.
+
+Therefore, we can say that we have
+
+1.  **Strong Multicollinearity:**
+
+The high values of multiple intercorrelation measures (q1, q2, q3, and q5) indicate a correlation structure, indicating that multicollinearity may be present.
+
+2.  **Data Redundancy:**
+
+The elevated q3 and q5 values suggest that some variables might be redundant. This data could benefit from variable selection or combining variables to reduce redundancy.
+
+## Heatmap and scatterplot of the correlation matrix
+
+```{r heatmap, message=FALSE, warning=FALSE, fig.cap="Correlation Heatmap of Fitness Metrics", fig.height=4.5, fig.width=4.5}
+# Calculate the correlation matrix
+R <- cor(quantitative_vars, use = "complete.obs")
+  
+# Plot the correlation heatmap
+corrplot(R, method = "color", mar = c(0, 0, 1, 0), 
+        tl.col = "black", addCoef.col = "black", 
+        number.cex = 0.7)
+```
+
+From the correlation plot, we observe the following:
+
+
+### Strong Positive Correlations
+
+These are depicted in dark blue with the value close to 1.
+
+-   **Weight and BMI (0.85):** This high correlation between the weight and the BMI is expected, as the BMI is directly calculated from weight and height.
+
+-   **Session Duration and Calories Burned (0.91):** There’s a strong relationship between the duration of a workout session and the calories burned. This makes sense, as longer sessions generally lead to higher energy consumption, hence higher burned calories.
+
+
+### Moderate Positive Correlations 
+
+Moderate positive correlations are colored in light blue and have a value between 0.3 and 0.6. 
+
+-   **Height and Weight (0.37):** Taller individuals tend to have a higher body weight, which aligns with general physiological trends.
+
+-   **Water Intake with Height and Weight (0.39):** Tall and heavy individuals typically consume more water during workouts, showing a moderate positive correlation with both height and weight.
+
+-   **Average Heart Rate and Calories Burned (0.34):** There’s a moderate association between a sustained higher heart rate (AvgHR) and an increase in calories burned, which can be attributed to the body’s energy requirements during intensified exercise.
+
+
+### Strong Negative Correlations
+
+Red entries in the correlation plot represent strong negative correlations that take values from -0.6 to -1.
+
+-   **Fat Percentage with Water Intake (-0.59):** Higher body fat percentages correlate with lower water intake during workouts.
+
+-   **Session Duration with Fat Percentage (-0.58):** Individuals with higher fat percentages often have shorter workout durations.
+
+-   **Calories Burned with Fat Percentage (-0.60):** A higher body fat percentage tends to correlate with fewer calories burned, possibly due to less intensive workout sessions.
+
+
+### Weak or No Correlations
+
+Very light colors are reserved for weak or no correlations, which are close to 0.
+
+-   **Age:** This variable shows very weak correlations with most fitness metrics, except for a slight negative correlation with Calories Burned (-0.15).
+
+-   **Resting Heart Rate (RestHR):** This metric has minimal correlation with other variables, suggesting it might not be a strong indicator of workout performance in this context.
+
+-   **Maximum Heart Rate (MaxHR):** Similarly, MaxHR displays weak correlations with most variables, indicating its limited association with other fitness metrics.
+
+### Observed Patterns 
+
+-   **Fitness Performance Metrics:** Session Duration, Calories Burned, and Water Intake are positively correlated with one another, forming a cluster of performance indicators.
+
+-   **Body Composition Metrics:** BMI, Weight, and Height are related, forming their own cluster that reflects body composition characteristics.
+
+-   **Heart Rate Metrics:** Max, Average, and Resting Heart Rates show surprisingly weak correlations with other metrics, suggesting they may be more influenced by individual baseline fitness than by workout characteristics.
+
+```{r fig.height=6, fig.width=6, fig.cap="Multiple Scatterplot Matrix of Fitness Metrics"}
+# plot the correlation scatter plot
+ggpairs(quantitative_vars,
+        lower = list(continuous = wrap("points", 
+                                     alpha = 0.1,    # Add transparency
+                                     size = 0.5)),   # Reduce point size
+        diag = list(continuous = wrap("barDiag", 
+                                    bins = 25)),     # Increase number of bins for histograms
+        upper = list(continuous = wrap("cor", 
+                                     size = 3)),     # Increase correlation text size
+        progress = FALSE) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 8),
+        strip.text = element_text(size = 8),
+        
+         axis.text.x = element_blank(),  # Remove x-axis text for individual plots
+        axis.text.y = element_blank(),  # Remove y-axis text for individual plots
+        axis.ticks = element_blank(), # remove ticks 
+        
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) 
+
+```
+
+From this scatterplot we can see
+
+**Distributions (diagonal plots):**
+
+-   **Age:** The distribution is relatively uniform across the age range of 20 to 60 years.
+
+-   **Weight (Wt):** Shows a right-skewed distribution, with most individuals concentrated in the lower-to-middle weight range.
+
+-   **Height (Ht):** Follows a roughly normal distribution.
+
+-   **Fat Percentage (FatPct):** Displays a left-skewed distribution.
+
+-   **Session hours:** Follows a roughly normal distribution.
+
+-   **Calories Burnt:** Slightly right-skewed, roughly normal.
+
+-   **BMI:** Similar to weight, BMI shows a right-skewed pattern.
+
+The rest of the quantitative variables do not seem to have any patterns or follow any distributions.
+
+
+
+
+
+
+
+<!-- # Data visualization -->
+
+<!-- We visualize each of the quantitative variables and plot them in a histogram. After, we show the box plot about fat percentage with workout type. -->
+
+<!-- ## Histograms of quantitative variables -->
+
+<!-- ```{r histo, include = TRUE} -->
+<!-- quantitative_vars %>% -->
+<!--   gather() %>% -->
+<!--   ggplot(aes(value)) + -->
+<!--   geom_histogram(bins = 20, fill = "skyblue4", color = "white") + -->
+<!--   facet_wrap(~ key, scales = "free") + -->
+<!--   theme_minimal() + -->
+<!--   labs(title = "Histograms of Quantitative Variables") -->
+<!-- ``` -->
+
+# Analysis of Categorical and Binary Variables
+
+## Workout Type, Performance, and Hydration
+
+We plot the far percentage for each for workout categories. Surprisingly, we can not see a significant difference between them. We notice a slight larger range for the calorie burn for yoga and some outliers for the HIIT and Strength workouts. We also notice a large range for the water intake for the HIIT type of workouts in comparison to the other workouts.
+
+```{r workout-boxplots, include = TRUE,fig.height=2.5, fig.width=7, fig.cap="Workout Type with Performance and Hydration"}
+library(patchwork)
+
+plot1 <- ggplot(data_clean, aes(x = WType, y = FatPct)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plot2 <- ggplot(data_clean, aes(x = WType, y = CBurn)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot3 <- ggplot(data_clean, aes(x = WType, y = Water)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+(plot1 | plot2 | plot3)
+
+```
+
+## Experience Level, Performance, and Hydration
+
+The fat percentage of beginners and intermediate level players there is no much difference, while there is a large gap between the experts and the non-experts with the experts having a much lower fat percentage. 
+
+Also the calorie burn increase with the experience level. Water intake is large for the experts (and skewed) and no significant differences between beginners and intermediate players.
+
+```{r experience-boxplot, include = TRUE,fig.height=2.5, fig.width=7, fig.cap="Experience Level with with Workout Performance and Hydration"}
+library(patchwork)
+
+plot1 <- ggplot(data_clean, aes(x = XP, y = FatPct)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plot2 <- ggplot(data_clean, aes(x = XP, y = CBurn)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot3 <- ggplot(data_clean, aes(x = XP, y = Water)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+(plot1 | plot2 | plot3)
+
+```
+
+## Gender, Performance, and Hydration
+
+Males generally have less fat percentage than females but burn slightly more and also the range is a bit larger. But the water intake of males is significantly higher than females.
+
+```{r gender-boxplot, include = TRUE,fig.height=2.5, fig.width=7, fig.cap="Gender with with Workout Performance and Hydration"}
+library(patchwork)
+
+plot1 <- ggplot(data_clean, aes(x = Gender, y = FatPct)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plot2 <- ggplot(data_clean, aes(x = Gender, y = CBurn)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot3 <- ggplot(data_clean, aes(x = Gender, y = Water)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+(plot1 | plot2 | plot3)
+
+```
+
+
+## Activity, Performance, and Hydration
+
+The fat percentage of players who go frequently to the gym (activity 1) are lower than the others who do not go to the gym as ofter. The range of the ones who goes to the gym frequently is larger though. Also, frequent players tend to burn more calories with slightly higher water intake. 
+
+
+```{r activity-boxplot, include = TRUE,fig.height=2.5, fig.width=7, fig.cap="Activity with with Workout Performance and Hydration"}
+library(patchwork)
+
+plot1 <- ggplot(data_clean, aes(x = Activity, y = FatPct)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plot2 <- ggplot(data_clean, aes(x = Activity, y = CBurn)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot3 <- ggplot(data_clean, aes(x = Activity, y = Water)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+(plot1 | plot2 | plot3)
+
+```
+
+
+
+
+
+# Principal Components
+
+Principal Component Analysis (PCA) is often used for interpretation and dimensionality reduction, @PeñaDaniel2002Addm. It takes advantage of the correlation between the different variables and produces linear combination of the variables, @HastieTrevor2009Teos. We compute the principal components, analyse them, and report the stability using Jack-Knife Sampling and Euclidean Distance.
+
+## Principal Component Analysis
+
+The high intercorrelation values (q1 = 0.973, q2 = 0.954, q3 = 0.989) indicate strong multicollinearity among the quantitative variables. This means many variables are measuring related aspects of fitness and physical characteristics, potentially providing redundant information. Hence, we conduct PCA to remove redundancy and create uncorrelated principal components that capture the main sources of variation. This helps us identify which combinations of variables best explain differences between gym members.
+
+<!-- Since we observed very high intercorrelations, we compute the principal components. -->
+
+
+
+```{r}
+# Perform PCA on correlation matrix
+pca_cor <- prcomp(quantitative_vars, center = TRUE, scale. = TRUE)
+
+# Extract eigenvalues (lambda)
+lambda <- pca_cor$sdev^2
+
+# Extract eigenvectors
+T <- pca_cor$rotation
+
+# Create complete results table
+pca_results <- data.frame(
+  PC = 1:length(lambda),
+  Lambda = lambda,
+  ProportionVar = lambda/sum(lambda),
+  CumulativeVar = cumsum(lambda/sum(lambda))
+)
+
+print(round(pca_results, 4))
+```
+
+From the PCA results based the correlation matrix, we can see that the eigenvalues of the principal components indicate the amount of variance explained by each component in descending order of importance. The first principal component (PC1) has an eigenvalue of 2.9273, which accounts for 26.61% of the total variance. The second, third, and fourth components (PC2, PC3, and PC4) have eigenvalues of 1.8942, 1.2747 and 1.0762, explaining 17.22%, 11.59% and 9.78% of the variance, respectively. Together, these four components account for 65.2% of the total variance in the data. The remaining components have eigenvalues ranging from 1.0354 to 0.9057, indicating that each contributes a smaller but still significant portion of the overall variance.
+
+These results indicate that no single principal component overwhelmingly dominates the data's variation, as evidenced by the moderate value of the first eigenvalue. This suggests the data's structure is complex and requires multiple components to adequately capture the majority of the variation. The gradual decrease in eigenvalues implies that the variables are moderately correlated, sharing some common patterns while also retaining unique information.
+
+```{r}
+print("Eigenvectors (T matrix):")
+# print(round(T[,c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9")], 4))
+print(round(T, 4))
+
+```
+
+From the eigenvector results, we can observe that PC1, which explains 26.61% of the variance, highlights a pattern contrasting exercise-related variables (calories burned, session duration, and water intake) with body composition (fat percentage). Specifically, individuals who burn more calories, exercise for longer, and drink more water tend to have lower body fat percentages, suggesting an "Exercise Effectiveness" component. The inclusion of water intake reinforces the idea that hydration plays a role in effective exercise habits, as it is positively correlated with workout intensity and duration.
+
+PC2 (17.22% of variance) reveals a pattern where individuals with lower weight and BMI tend to have longer workout sessions and burn more calories, while heavier individuals with higher BMI tend to have shorter sessions and burn fewer calories. We might be able to label this component as "Body Mass Impact on Workout Patterns" or "Size-Related Exercise Patterns".
+
+PC3 (11.59% of variance) contrasts height with BMI and average heart rate. Meanwhile, PC4 (9.78% of variance) focuses on heart rate metrics and age, which can reflect age-related differences in heart rate during exercise. These patterns collectively highlight the complexity of relationships between variables in the dataset, with multiple components needed to capture the variation.
+
+```{r}
+# Calculate and print component scores
+scores <- as.data.frame(pca_cor$x)
+colnames(scores) <- paste0("Y", 1:ncol(scores))
+
+print(round(head(scores), 4))
+
+# Get the top 6 observations to compare with component scores
+top6 <- head(data_clean, 6)
+print(top6)
+
+```
+
+These are the component scores (Y values) for the first 6 observations in the dataset, showing how each individual maps onto the principal components we discussed earlier. Now we compared some of these significant observations and their corresponding component scores with our real data.
+
+As we said earlier, PC1, labeled "Exercise Effectiveness," identifies individuals with contrasting exercise habits. For example, Individual #1 (Y1 = 3.1834, strongly positive) indicates an effective exerciser, burning 1313 calories in a 1.69-hour workout while drinking 3.5 liters of water and maintaining a very low body fat percentage of 12.6%. This aligns with the pattern of long, intense workouts, proper hydration, and lean body composition. On the other hand, Individual #4 (Y1 = -2.4779, strongly negative) represents the opposite trend: burning only 532 calories in short 0.59-hour sessions, with lower hydration (2.1 liters of water) and a higher body fat percentage (28.8%), indicating less effective exercise routines.
+
+For PC2, we can also observe that Individual #6, with a high positive score on PC2 (Y2 = 1.8520), demonstrates the pattern captured by this component. The raw data shows that this individual has a low weight of 58 kg and a BMI of 20.55, both indicative of a smaller body size. Despite these factors, they engage in long workout sessions lasting 1.59 hours and achieve a high calorie burn of 1116. This perfectly matches our original interpretation of PC2 that individuals with lower weight and BMI tend to have longer workout sessions and burn more calories, while heavier individuals with higher BMI tend to have shorter sessions and burn fewer calories.
+
+However, it's important to note that We're only seeing 6 observations out of 973 and the interpretations are relative to the overall dataset patterns.
+
+```{r, fig.cap="Scree Plot with Selection Criteria", fig.height=5}
+# Create visualization of variance explained with selection criteria
+var_plot <- ggplot(pca_results, aes(x = PC)) +
+  geom_line(aes(y = Lambda, color = "Eigenvalues")) +
+  geom_point(aes(y = Lambda), color = "blue", size = 3) +
+  geom_line(aes(y = CumulativeVar * max(Lambda), color = "Cumulative Proportion")) +
+  geom_point(aes(y = CumulativeVar * max(Lambda)), color = "red", size = 3) +
+  geom_hline(yintercept = 1, color = "darkgreen", linetype = "dashed", alpha = 0.5) +
+  geom_hline(yintercept = 0.7, color = "orange", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(
+    name = "Eigenvalue",
+    sec.axis = sec_axis(~./max(pca_results$Lambda), 
+                       name = "Cumulative Proportion", 
+                       labels = scales::percent)
+  ) +
+  scale_color_manual(
+    values = c("Eigenvalues" = "blue", "Cumulative Proportion" = "red"),
+    name = "Metrics"
+  ) +
+  theme_minimal() +
+  labs(#title = "Scree Plot with Selection Criteria",
+       x = "Principal Component",
+       caption = "Green: Kaiser criterion (>1)\nOrange: Jolliffe criterion (>0.7)") +
+  theme(
+    axis.title.y.left = element_text(color = "blue"),
+    axis.title.y.right = element_text(color = "red"),
+    legend.position = "bottom"
+  )
+
+print(var_plot)
+```
+
+From the Scree plot we can observe that the eigenvalue line shows a sharp decline from PC1 (\~2.9) to PC3 (\~1.3), leveling off around PC4, where it forms an "elbow" and falls below the Kaiser criterion (eigenvalue \< 1.0). The cumulative variance line reveals that the first four components explain about 65% of the total variance, with additional components contributing marginally.
+
+```{r, fig.cap="Correlations between Variables and PCs", fig.height=4, fig.width=6}
+# Compute correlations between original variables and PCs
+correlations <- sweep(T, 2, sqrt(lambda), "*")
+
+correlation_data <- expand.grid(
+  Variable = rownames(correlations),
+  PC = paste0("PC", 1:ncol(correlations))
+)
+correlation_data$value <- as.vector(correlations)
+
+correlation_heatmap <- ggplot(correlation_data, 
+                            aes(x = PC, y = Variable, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0
+  ) +
+  theme_minimal() +
+  labs(#title = "Correlations between Variables and PCs",
+       fill = "Correlation") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(correlation_heatmap)
+```
+
+The heatmap reveals that for PC1, the most significant component, shows strong positive correlations with calories burned, session duration, and water intake, and a strong negative correlation with body fat percentage as discussed before. For PC2, we have strong negative correlations (blue) with BMI and Weight (Wt) with Moderate positive correlations with Session duration. PC3 demonstrates strong negative correlation with Height (Ht) and moderate correlations with BMI and heart rate measures. For PC4, we can observe strong correlations with heart rate measures (AvgHR, RestHR).
+
+We can see that the correlations become weaker (more white/pale colors) in later PCs, confirming these components are less important.
+
+```{r, fig.cap="PCA Biplot (First Two Components)", fig.height=4, fig.width=6}
+# First two PCs biplot
+biplot_data <- data.frame(
+  PC1 = scores$Y1,
+  PC2 = scores$Y2
+)
+
+biplot <- ggplot() +
+  geom_point(data = biplot_data, aes(x = PC1, y = PC2), alpha = 0.5, color = "cadetblue") +
+  geom_segment(
+    data = data.frame(
+      Variable = rownames(T),
+      x = 0,
+      y = 0,
+      xend = T[,1] * 3,
+      yend = T[,2] * 3
+    ),
+    aes(x = x, y = y, xend = xend, yend = yend),
+    arrow = arrow(length = unit(0.2, "cm")),
+    color = "maroon"
+  ) +
+  geom_text(
+    data = data.frame(
+      Variable = rownames(T),
+      x = T[,1] * 3.2,
+      y = T[,2] * 3.2
+    ),
+    aes(x = x, y = y, label = Variable),
+    size = 3,
+    color = "black"
+  ) +
+  theme_minimal() +
+  coord_fixed() +
+  labs(
+    #title = "PCA Biplot (First Two Components)",
+    x = paste0("PC1 (", round(pca_results$ProportionVar[1] * 100, 1), "% variance)"),
+    y = paste0("PC2 (", round(pca_results$ProportionVar[2] * 100, 1), "% variance)")
+  )
+
+print(biplot)
+```
+
+Together, PC1 and PC2 capture 43.8% of the total variance. Shown with red arrows, we can see variable relationships and how closely related they are by pointing in similar directions.
+
+-   Session duration and Calories Burned (CBurn) - very tight grouping
+-   BMI and Weight (Wt) - closely aligned
+-   Heart rate measures (AvgHR, MaxHR, RestHR) - moderately clustered but aren't strongly aligned with either major component
+
+Longer arrows indicate stronger contributions to these components. Hence, for PC1, the most influential variables are session duration, Calories Burned, Water intake (positive) and Fat Percentage (negative). For PC2, they are Session duration, Calories Burned (positive) and BMI, Weight (negative).
+
+There are some opposing relationships as well (arrows pointing in opposite directions). For example, There is an inverse relationship between body fat and workout effectiveness (Water intake, Session duration and calories burnt).
+
+Blue dots represent individual gym members. Wide scatter indicates high variability in member profiles and we can see points spread more along PC1 than PC2.
+
+Several distinct clusters appear:
+
+-   **Upper right:** Members with long workouts, high calorie burn
+-   **Lower right:** Heavier members with good workout intensity
+-   **Left side:** Members with higher body fat, shorter sessions
+-   **Center:** Members with moderate values across variables
+
+There are also some outliers as several points appear far from the main clusters. We see extreme values in both positive and negative directions for both PCs.These might represent either very successful members or those struggling with their fitness goals
+
+```{r, results=FALSE}
+# Selection Criteria
+kaiser_criterion <- lambda > 1
+jolliffe_criterion <- lambda > 0.7
+# Print final summary statistics
+print("Selection Criteria Summary:")
+print(paste("Number of components by Kaiser criterion (>1):", sum(kaiser_criterion)))
+print(paste("Number of components by Jolliffe criterion (>0.7):", sum(jolliffe_criterion)))
+
+print("Percentage of explained variability:")
+for(i in 1:4) {
+  print(paste("component", i, ":", round(pca_results$ProportionVar[i] * 100, 4), "%"))
+}
+
+
+print(paste("Cumulative (first four components):", 
+            round(pca_results$CumulativeVar[4] * 100, 4), "%"))
+
+cat(sprintf("\nCumulative (first four components): %.4f%%\n", 
+            pca_results$CumulativeVar[4] * 100))
+
+```
+Through the PCA on our data, we conclude :
+
+- Using Kaiser criterion (eigenvalue > 1), the scree plot suggests retaining 4 principal components. They explain 65.2% of the total variance. We do not keep any more components as adding more components increase complexity without substantial insight. Fewer components make interpretation more manageable, Hence we chose only 4 components. \
+PC1 = 26.6% \
+PC2 = 17.2% \
+PC3 = 11.6% \
+PC4 = 9.8% \
+
+
+- The correlation heatmap shows strong correlations between variables : \
+PC1: Strongly correlated with **CBurn, Session, and BMI**. \
+PC2: Opposite trends in **BMI (negative) and Session/CBurn (positive)**. \
+PC3: High contributions from **Ht (negative)**. \
+PC4: **AvgHR** contributes positively. \
+
+
+- Meanwhile, the Biplot shows clustering of individuals around PCs. The arrows indicate positive relationship between features like **Cburn and Session** along PC1. While **BMI And Wt** has opposite contributions **Cburn and Session** along PC2.
+
+## Stability of the Principal Components
+
+
+In this section, we analyse the stability of the principal components by measuring the contribution of each observation shown by @grane2018visualizing. We use Jack-Knife resampling so one observation $i$ is left out while the others are used to compute the $PCA_i$. The Euclidean distance is then computed between each of the principal components and the full/original principal components (without removing any observations). We plot the distances as a histogram to show the distribution/structure of the distances and we show the box plot to see outliers, mean, and the quantiles.
+
+
+
+```{r, fig.cap="Histogram and Boxplot of PCA Stability Distances", fig.height=4, fig.width=7}
+library(stats)
+
+pca_stability <- function(X){
+  n <- nrow(X) 
+  p <- ncol(X) 
+  d <- numeric(n)
+  
+  # PCA for all the data points
+  pca <- prcomp(X, center = TRUE, scale. = TRUE)
+  Y <- pca$x 
+  
+    for (i in 1:n) {
+     Xi <- X[-i, ]
+    
+    # PCA except for the ith observation
+    pcai <- prcomp(Xi, center = TRUE, scale. = TRUE)
+    
+    xi <- as.numeric(scale(X[i, ], center = pcai$center, scale = pcai$scale))
+    proj <- xi %*% pcai$rotation
+    Ya <- rbind(pcai$x, proj)
+    d[i] <- sqrt(sum((Y[i, ] - proj)^2))
+  }
+  
+  return(d)
+}
+
+# Compute the stability of the PCA using Jack Knife sampling
+euc_distances <- pca_stability(quantitative_vars)
+
+# print("Euclidean Distances for Stability Analysis:")
+# print(euc_distances)
+
+par(mfrow = c(1, 2))  # 1 row, 2 columns
+
+
+plot1 <- hist(euc_distances, main="",#main = "Histogram of PCA Stability Distances", 
+     xlab = "Euclidean Distance", col = "skyblue")
+
+plot2 <- boxplot(euc_distances, main="", #main = "Boxplot of PCA Stability Distances",
+        ylab = "Euclidean Distance", col = "skyblue")
+
+```
+
+
+
+After conducting a study on PCA stability distances, through quantifying the influence of individual observations on PCA, in order to detect  influential points or sources of variability, and Euclidean distances to check the stability of PCA projections. We notice that PCA distances are moderately dispersed:
+
+- **The histogram of PCA stability distances** indicates a unimodal distribution in which most distances are concentrated between 2 and 5 with a peak around 3–4, although there is a slight right skew, indicating the presence of occasional larger variations.
+- **The Boxplot of PCA Stability Distances** shows a median around 3.5, an IQR between approximately 2 and 5, and a few outliers near distance values of 8–10, thereby suggesting that some components have minor instability.
+
+## Influencial Variables
+
+```{r influence, results=FALSE}
+
+pca <- prcomp(quantitative_vars, center = TRUE, scale. = TRUE)
+
+# Extract eigenvectors
+loadings <- pca$rotation
+
+# Compute the absolute eigenvects for the 4 selected principal components
+num_components <- 4 
+top_influential <- list()
+
+for (i in 1:num_components) {
+  abs_loadings <- abs(loadings[, i])
+    ranked_vars <- sort(abs_loadings, decreasing = TRUE)
+    
+  # Top 3 variables :
+  top_influential[[paste0("Component_", i)]] <- names(ranked_vars[1:3])
+}
+
+print("Top 3 influential variables for each principal component:")
+print(top_influential)
+```
+
+Through the results, we can deduct that : 
+
+- **Component 1** explains fat-burning efficiency and session intensity, as **FatPctm, Session and CBurn** are strongly associated to it. This means that longer the session is, the less body fat percentage and more calories are burned.
+- **Component 2** focuses on body mass and its interplay with exercise, as **Wt and BMI ** are strongly contributing to it. The session could reflect the intensity that is associated to an individual's body mass or BMI. 
+- **Component 3** combines body size with cardiovascular responses, as **Ht and BMI** are important variables for this component. 
+- **Component 4** highlights age-related cardiovascular variations, as **AvgHR and RestHR** influence the most this component. It could be interpreted as the variation of age groups influence cardiovascular fitness and changes.
+
+# Conclusion
+
+After analyzing the data related to gym members and their fitness metrics, we concluded that workout duration, calories burned, BMI and hydration levels contributed most to the variance. Workout intensity metrics like calories burned and session duration displayed a negative relationship with BMI, and this was interesting. Hydration levels played a role as higher water intake is associated with lower fat percentages. However, it was shown that variables like resting heart rate had weak correlations with the primary components.  
+We found that Jack-Knife and Euclidean Distance generally show stable Principal Components. The most influential variables we found are Calories Burned and Session Duration and BMI and Water Intake. We discovered that Water Intake influences Fat Percentage and that BMI affects Calories Burned. 
+Our analysis also shows that the percentage of fat burned does not depend on the workout type. These findings show that individual physiological factors and workout metrics importantly influence fitness outcomes.
+
+
+<!--
+# Conclusion
+We analysed the data about .. and found that ... Interestingly .. however, .... Nonetheless ...
+We found that the Principal Components are generally stable using Jack-Knife and Euclidean Distance. We also found the following variables the be the most influencial : ... Generally, we found a relation between .. and ..
+Our analysis shows that the workout type does not have a significant imporant on the percentage of fat burned.
+-->
+
+# References

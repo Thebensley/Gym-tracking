@@ -1,0 +1,1987 @@
+---
+title: "Gym Members"
+author: "Youssef Benslimane, Ahmad Alobaid, Seyed Amirhossein Mosaddad"
+date: "`r Sys.Date()`"
+bibliography: references.bib  
+link-citations: true  
+output: 
+  pdf_document:
+    keep_tex: true
+    latex_engine: xelatex
+    number_sections: true
+    toc: true
+    toc_depth: 3
+header-includes:
+  - \usepackage{setspace}
+  - \setstretch{1.5}  
+  - \usepackage{geometry}
+  - \geometry{margin=1in}
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, wrap=TRUE, comment=NA)
+```
+
+
+# Introduction
+
+Physical fitness is key to health and well-being, yet gaps often exist between perceived and actual workout habits, leaving fitness enthusiasts and hobbyists susceptible to confirmation bias. This report analyzes data from 973 gym members to explore workout patterns, health indicators, and demographics. Using Multidimensional Scaling (MDS) and clustering analysis, we identify distinct member segments and uncover patterns in workout behaviors and experience levels.
+
+## Objectives
+
+-   Identify trends in workout intensity and duration across demographics.
+
+-   Explore relationships between physiological attributes and fitness metrics.
+
+-   Visualize member relationships using Multidimensional Scaling (MDS).
+
+-   Segment gym members using clustering techniques.
+
+-   Visualize and measure similarities and differences across key workout metrics.
+
+We use **Multidimensional Scaling (MDS)** to visualize similarities and differences among gym members in a reduced-dimensional space, while **clustering analysis** helps identify distinct groups based on shared patterns in workout behaviors, health indicators, and demographics.
+
+```{r}
+#Libraries used 
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(knitr)
+library(corrplot)
+library(MASS)
+library(cluster)
+library(patchwork)
+library(kableExtra)
+library(clustMixType)
+library(gridExtra)
+library(gplots)
+```
+
+## Data Description
+
+The fitness dataset @gym_members_exercise_dataset includes 15 variables.
+We describe the variables and shorten the names for convenience below.
+
+```{r}
+# Load the dataset
+data <- read.csv("gym_members_updated.csv")
+
+colnames(data)[which(colnames(data) == "Weight..kg.")] <- "Wt"
+colnames(data)[which(colnames(data) == "Height..m.")] <- "Ht"
+colnames(data)[which(colnames(data) == "Water_Intake..liters.")] <- "Water"
+colnames(data)[which(colnames(data) == "Session_Duration..hours.")] <- "Session"
+
+# Check for missing values and remove rows with NA
+#sum(is.na(data))
+data_clean <- na.omit(data)
+
+# Select and rename variables
+data_clean <- data_clean %>%
+  dplyr::select(Age, Wt, Ht, Max_BPM, Avg_BPM, Resting_BPM, 
+         Gender, Calories_Burned, Workout_Type, Experience_Level, 
+         Fat_Percentage, Water, Session, BMI, Activity) %>%
+  rename(
+    MaxHR = Max_BPM,
+    AvgHR = Avg_BPM,
+    RestHR = Resting_BPM,
+    CBurn = Calories_Burned,
+    WType = Workout_Type,
+    XP = Experience_Level,
+    FatPct = Fat_Percentage
+  )
+
+# Convert necessary variables to factors for categorical data
+data_clean$Activity <- as.factor(data_clean$Activity)
+data_clean$Gender <- as.factor(data_clean$Gender)
+data_clean$WType <- as.factor(data_clean$WType)
+data_clean$XP <- as.factor(data_clean$XP)
+
+# Get number of rows and columns
+rows_raw <- nrow(data)
+col_raw <- ncol(data)
+col_cleaned <- ncol(data_clean)
+rows_cleaned <- nrow(data_clean)
+
+# Print the results
+message(paste("Number of columns of raw data is:", col_raw, "and number of rows of raw data is:", rows_raw ))
+
+message(paste("Number of columns of cleaned data is:", col_cleaned, "and number of rows of cleaned data is:", rows_cleaned ))
+
+data <- data_clean
+
+```
+
+
+```{r}
+# Function to summarize dataset with manual descriptions
+summarize_dataset <- function(data, descriptions) {
+  summary_table <- lapply(names(data), function(var) {
+    # Determine whether the variable is numeric or categorical
+    if (is.numeric(data[[var]])) {
+      variable_type <- "Numeric"
+      range <- paste0("[", min(data[[var]], na.rm = TRUE), ", ", max(data[[var]], na.rm = TRUE), "]")
+    } else if (is.factor(data[[var]]) || is.character(data[[var]])) {
+      variable_type <- "Categorical"
+      range <- paste(unique(data[[var]]), collapse = ", ")
+    } else {
+      variable_type <- "Other"
+      range <- "Not applicable"
+    }
+    
+    # Fetch the manual description
+    description <- descriptions[[var]] %||% "No description provided"
+    
+    # Create a row for the table
+    data.frame(
+      Variable = var,
+      Type = variable_type,
+      Range = range,
+      Description = description,
+      stringsAsFactors = FALSE
+    )
+  })
+  
+  # Combine all rows into a single data frame
+  do.call(rbind, summary_table)
+}
+
+# Example dataset
+
+# Manually provide descriptions for each variable
+descriptions <- list(
+  Age = "Age of the gym member in years",
+  Wt = "Member’s weight in kilograms, which affects workout intensity and calorie expenditure",
+  Ht = "Member’s height in meters, used with weight to calculate BMI",
+  MaxHR = "Maximum beats per minute (BPM) during workout sessions, reflecting peak heart rate",
+  AvgHR = "Average heart rate during workout sessions, indicating sustained workout intensity",
+  RestHR = "Heart rate before exercise, providing a baseline for cardiovascular fitness",
+  Session = "Duration of each workout session in hours, indicating workout length",
+  CBurn = "Total calories burned per workout session, a key indicator of energy expenditure",
+  FatPct = "Body fat percentage, indicating body composition and fitness level",
+  Water = "Liters of water consumed during workouts, related to hydration and recovery",
+  BMI = "Body Mass Index, calculated from height and weight, used to assess health risk and body composition",
+  Gender = "Indicates the gender of the gym member (Male or Female)",
+  Activity = "Represents the member’s regular participation level. A value of 1 means active (goes to the gym at least 3 times a week) and 0 otherwise",
+  WType = "Type of workout performed by the member, with categories including Cardio, Strength, Yoga, and HIIT (High-Intensity Interval Training)",
+  XP = "Self-reported experience level of the member: 1 = Beginner, 2 = Intermediate, 3 = Expert"
+)
+
+
+# Generate the summary table
+summary_df <- summarize_dataset(data, descriptions)
+
+
+
+kable(summary_df, caption = "Fitness Dataset Summary") %>%
+  kable_styling(full_width = TRUE, font_size = 7) %>%
+  column_spec(1, width = "1.1cm") %>%  
+  column_spec(2, width = "1.6cm") %>%  
+  column_spec(3, width = "2.2cm") %>%  
+  column_spec(4, width = "9.8cm")     
+
+```
+
+# Multi-Dimensional Scaling
+
+MDS is applied to the distance matrix calculated from the gym dataset.
+Both classical and non-metric MDS are used to visualize the similarity structure among gym members by representing distances between individuals in a lower dimensional space.
+The purpose is to provide different perspectives on the relationships among members.
+
+
+## Influence of the original variables in the MDS
+
+```{r, fig.height=2.9, fig.cap="Principal Coordinates Heatmap"}
+# Read and prepare data
+data_56 <- read.csv("gym_members_updated.csv")
+
+# Convert categorical variables to factors
+data_56$Gender <- as.factor(data_56$Gender)
+data_56$Workout_Type <- as.factor(data_56$Workout_Type)
+data_56$Experience_Level <- as.factor(data_56$Experience_Level)
+data_56$Activity <- as.factor(data_56$Activity)
+
+# Calculate Gower distances
+gower_dist <- daisy(data_56, metric = "gower")
+dist_matrix <- as.matrix(gower_dist)
+
+# Calculate Gram matrix using double centering
+n <- nrow(dist_matrix)
+H <- diag(n) - (1/n) * matrix(1, n, n)
+G <- -0.5 * H %*% (dist_matrix^2) %*% H
+
+# Perform eigendecomposition
+eigen_decomp <- eigen(G)
+k <- 3  # Number of dimensions to show
+
+# Calculate principal coordinates
+config <- eigen_decomp$vectors[, 1:k] %*% diag(sqrt(pmax(eigen_decomp$values[1:k], 0)))
+
+# Calculate correlations between original variables and principal coordinates
+correlations <- matrix(nrow = ncol(data_56), ncol = k)
+rownames(correlations) <- colnames(data_56)
+colnames(correlations) <- paste0("PC", 1:k)
+
+# For numeric variables: use regular correlation
+numeric_vars <- sapply(data_56, is.numeric)
+for(i in which(numeric_vars)) {
+  for(j in 1:k) {
+    correlations[i,j] <- cor(data_56[[i]], config[,j])
+  }
+}
+
+# For categorical variables: use correlation ratio (eta)
+categorical_vars <- !numeric_vars
+for(i in which(categorical_vars)) {
+  for(j in 1:k) {
+    # Calculate correlation ratio using ANOVA
+    fit <- aov(config[,j] ~ data_56[[i]])
+    ss_total <- sum((config[,j] - mean(config[,j]))^2)
+    ss_between <- sum(summary(fit)[[1]]$"Sum Sq"[1])
+    correlations[i,j] <- sqrt(ss_between/ss_total)
+  }
+}
+
+# Convert correlation matrix to long format for ggplot
+plot_data <- as.data.frame(correlations) %>%
+  tibble::rownames_to_column("Variable") %>%
+  tidyr::pivot_longer(-Variable, 
+                      names_to = "PC", 
+                      values_to = "Correlation")
+
+# Create improved heatmap using ggplot2
+ggplot(plot_data, aes(x = PC, y = Variable, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "navy",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    limits = c(-1, 1)
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 10),  # General text size
+    axis.text.y = element_text(hjust = 1),
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 0)
+  ) +
+  labs(
+    title = "",
+    x = "",
+    y = ""
+  ) +
+  # Add correlation values as text
+  geom_text(aes(label = sprintf("%.2f", Correlation)), 
+            color = ifelse(abs(plot_data$Correlation) > 0.5, "white", "black"),
+            size = 3)
+
+# Print explained variance
+explained_var <- eigen_decomp$values[1:k] / sum(abs(eigen_decomp$values)) * 100
+message("\nExplained variance by dimension:\n")
+for(i in 1:k) {
+  message(sprintf("PC%d: %.1f%%\n", i, explained_var[i]))
+}
+```
+
+The heatmap (Figure 1) shows the correlations between the original variables and the top three principal coordinates (PC1, PC2, and PC3) derived from the MDS.
+
+1.  PC1 (Explained Variance: 12.5%):
+
+    -   Gender (0.82), Water Intake (0.80), and Fat Percentage (-0.73) strongly influence PC1.
+
+    -   PC1 primarily differentiates individuals based on **gender**, **hydration levels**, and **body fat percentage**.
+        Positive correlations with Gender and Water Intake suggest that gender and higher hydration significantly contribute to the first principal coordinate, while body fat percentage has a strong negative influence.
+
+2.  PC2 (Explained Variance: 10.0%):
+
+    -   **Experience Level** (0.81), **Activity** (0.76), and **Session Duration** (0.62) have the highest correlations with PC2.
+
+    -   PC2 is primarily driven by **experience level** and **activity level**, which highlight differences in self-reported experience and participation in gym sessions.
+        The strong correlation with **session duration** indicates that members who spend more time exercising align closely with PC2.
+
+3.  **PC3 (Explained Variance: 6.1%)**:
+
+    -   **Experience Level** (0.93) and **Calories Burned** (0.35) are the key drivers of PC3.
+
+    -   PC3 heavily reflects **self-reported experience level** as the strongest determinant, along with **calories burned** during workouts.
+        This suggests PC3 captures aspects of workout intensity and expertise.
+
+While this explained variance may seem low, it is typical for high-dimensional mixed-type data.
+The key dimensions (PC1, PC2, and PC3) capture the most significant patterns of variation in the dataset, which are visualized and interpreted in the heatmap.
+
+## Principal Coordinate Analysis with Gram Matrix Calculation
+
+```{r, fig.height=3, fig.cap="Principal Coordinates from MDS"}
+# Step 1: Compute the Matrix of Squared Distances
+distance_matrix <- dist(data[, -1], method = "euclidean")
+D_squared <- as.matrix(distance_matrix)^2
+
+# Step 2: Compute the Gram Matrix (G = -0.5 * H * D^2 * H)
+n <- nrow(D_squared)
+H <- diag(n) - (1/n) * matrix(1, n, n) # Centering matrix
+G <- -0.5 * H %*% D_squared %*% H
+
+# Step 3: Diagonalize Gram Matrix to Obtain Principal Coordinates
+eigen_result <- eigen(G)
+eigenvalues <- eigen_result$values
+eigenvectors <- eigen_result$vectors
+
+# Step 4: Calculate Principal Coordinates (Y = U * sqrt(Lambda))
+# Keep only positive eigenvalues
+positive_indices <- which(eigenvalues > 0)
+Lambda_sqrt <- diag(sqrt(eigenvalues[positive_indices]))
+U <- eigenvectors[, positive_indices]
+Y <- U %*% Lambda_sqrt
+
+# Plot Principal Coordinates Result
+plot(Y[, 1], Y[, 2], main = "", xlab = "Coordinate 1", ylab = "Coordinate 2", pch = 19, cex = 0.5)
+```
+
+Through the two dimensional space of gym members' distribution, dimension 1 captures most of the variation among members.
+The points that are closer to each other indicates gym members with similar fitness profiles, such as workout type and calories burnt.
+
+
+## Non-metric MDS :
+
+```{r, fig.height=3, fig.cap="Non-metric MDS Plot of Gym Members"}
+sink(nullfile())  # Redirect console output to null
+nmds_result <- isoMDS(as.matrix(distance_matrix), k = 2)
+sink()  # Restore normal console output
+# To supress the output
+# nmds_result <- invisible(capture.output(
+#   suppressMessages(suppressWarnings(isoMDS(as.matrix(distance_matrix), k = 2)))
+# ))
+
+# Plot non-metric MDS result
+plot(nmds_result$points, main = "", xlab = "Dimension 1", ylab = "Dimension 2", pch = 19, cex = 0.5)
+```
+
+-   In contrast, the non-metric MDS plot preserves the rank order of distances.
+    It shows a nearly identical pattern to the classical MDS plot.
+    This similarity suggests that the rank-based relationships among gym members are consistent with the original Euclidean distances, indicating strong linear relationships in the data.
+    
+
+-   In both plots, dimension 1 explains most of the variation, which highlights its importance to differentiate between members based on key fitness attributes.
+
+```{r, fig.height=3, fig.cap="MDS Configuration (Gower's) Explained variation"}
+# Function to identify variable types and preprocess accordingly
+prepare_data_for_gower <- function(data) {
+  # Convert data to data frame if it isn't already
+  data <- as.data.frame(data)
+  
+  # Process each column
+  for(i in 1:ncol(data)) {
+    # Get unique values (excluding NA)
+    unique_vals <- unique(na.omit(data[[i]]))
+    
+    if(is.character(data[[i]]) || is.factor(data[[i]])) {
+      # Convert to factor if character or factor
+      data[[i]] <- as.factor(data[[i]])
+    } else if(is.numeric(data[[i]])) {
+      if(length(unique_vals) == 2 && all(unique_vals %in% c(0, 1))) {
+        # Binary numeric (0/1) -> convert to factor
+        data[[i]] <- factor(data[[i]])
+      } else if(length(unique_vals) <= 10 && all(unique_vals == round(unique_vals))) {
+        # If numeric with ≤10 unique integer values, treat as ordinal
+        data[[i]] <- factor(data[[i]], ordered = TRUE)
+      }
+      # Otherwise keep as numeric
+    }
+  }
+  
+  return(data)
+}
+
+# Function to compute Gower's distance with proper type handling
+compute_gower_distance <- function(data) {
+  # Compute Gower distances
+  gower_dist <- daisy(data, metric = "gower")
+  return(as.matrix(gower_dist))
+}
+
+# Main MDS analysis function with categorical support
+run_mds_analysis <- function(data, k = 2, plot_labels = TRUE) {
+  # Remove any columns that are completely NA
+  data <- data[, colSums(!is.na(data)) > 0]
+  
+  # Preprocess data
+  data_processed <- prepare_data_for_gower(data)
+  
+  # Compute distance matrix
+  D <- compute_gower_distance(data_processed)
+  
+  # Perform classical MDS
+  mds_result <- cmdscale(D, k = k, eig = TRUE)
+  
+  # Calculate explained variation
+  eigenvals <- mds_result$eig[mds_result$eig > 0]
+  explained_var <- eigenvals / sum(abs(mds_result$eig))
+  explained_var_k <- sum(explained_var[1:k]) * 100
+  
+  # Create plot
+  if(k == 2) {
+    # Basic plot
+    plot(mds_result$points, 
+         main = paste("MDS Configuration(Gower's) Explained variation:", 
+                     round(explained_var_k, 2), "%"),
+         xlab = "First coordinate",
+         ylab = "Second coordinate",
+         type = "p")
+    
+    # Add labels if requested and not too many points
+    if(plot_labels && nrow(data) <= 100) {
+      text(mds_result$points, labels = rownames(data), pos = 3, cex = 0.8)
+    }
+  }
+  
+  # Return results
+  return(list(
+    coordinates = mds_result$points,
+    explained_variation = explained_var_k,
+    eigenvalues = eigenvals,
+    distance_matrix = D,
+    processed_data = data_processed
+  ))
+}
+
+# Function to plot MDS results by category
+plot_mds_by_category <- function(mds_result, category_vector, main_title = "MDS Plot") {
+  # Create color vector
+  categories <- as.factor(category_vector)
+  colors <- rainbow(length(levels(categories)))
+  point_colors <- colors[as.numeric(categories)]
+  
+  # Plot
+  plot(mds_result$coordinates,
+       col = point_colors,
+       pch = 16,
+       main = main_title,
+       xlab = "First coordinate",
+       ylab = "Second coordinate")
+  
+  # Add legend
+  legend("bottomright", 
+         legend = levels(categories),
+         col = colors,
+         pch = 16,
+         cex = 0.5)
+}
+data_MDS <- read.csv("gym_members_updated.csv")
+results <- run_mds_analysis(data_MDS, k = 2)
+```
+
+The plot with Gower's method (Figure 4) shows a two-dimensional representation of the data, where the first and second coordinates capture **23.43% of the total variability** based on Gower's distance.
+Although the explained variation is relatively low, the plot reveals distinct **cluster patterns**, showing underlying groupings or similarities among the observations.
+Four prominent clusters are observed, with clear separation between them, indicating that certain features in the dataset drive these similarities and differences.
+
+The closer proximity of points within clusters highlights their higher degree of similarity, whereas the larger gaps between clusters suggest significant dissimilarity across groups.
+This structure implies that the dataset contains meaningful patterns that can be further investigated.
+
+
+```{r, fig.cap="MDS scatter plot for categorical data"}
+# Set up a 2x2 grid for plots
+par(mfrow = c(2, 2))  
+
+# Generate the plots
+plot_mds_by_category(results, data_MDS$Gender, main_title = "MDS by Gender")
+plot_mds_by_category(results, data_MDS$Activity, main_title = "MDS by Activity")
+plot_mds_by_category(results, data_MDS$Experience_Level, main_title = "MDS by Experience Level")
+plot_mds_by_category(results, data_MDS$Workout_Type, main_title = "MDS by Workout Type")
+
+# Reset plotting parameters to default
+par(mfrow = c(1, 1))
+
+```
+
+Now, we have plotted the MDS coordinates based on different categories from our dataset (Figure 5).
+
+1.  **MDS by Gender**:
+    -   Two distinct clusters are clearly visible, representing **Male** and **Female** categories.
+    -   The separation suggests significant differences in the data structure based on gender, indicating that certain variables contribute strongly to differentiating males and females.
+2.  **MDS by Activity**:
+    -   Similar to the gender plot, the data separates into two clusters corresponding to **Activity levels** (0 and 1).
+    -   This shows that activity status is a key factor in driving differences among individuals, with each group forming tightly clustered patterns.
+3.  **MDS by Experience Level**:
+    -   Three clusters are evident, corresponding to **Experience Levels 1, 2, and 3**.
+    -   This suggests that individuals' experience levels influence their data patterns. Levels 2 and 3 are spatially close but still distinct, while Level 1 is more separated from the other two.
+4.  **MDS by Workout Type**:
+    -   The plot for **Workout Type** shows a more overlapping structure with less distinct separation between categories (Cardio, HIIT, Strength, Yoga).
+    -   This indicates that workout types may not be as strong a differentiator as other variables (like gender or experience level), with individuals sharing more similarities across workout types.
+
+```{r}
+#Read the data
+data_mod <- read.csv("gym_members_updated.csv")
+
+# Identify numeric and categorical columns
+numeric_cols <- c("Age", "Weight..kg.", "Height..m.", "Max_BPM", "Avg_BPM", 
+                 "Resting_BPM", "Session_Duration..hours.", "Calories_Burned",
+                 "Fat_Percentage", "Water_Intake..liters.", "BMI")
+
+# Convert categorical variables to factors
+data_mod$Gender <- as.factor(data_mod$Gender)
+data_mod$Workout_Type <- as.factor(data_mod$Workout_Type)
+data_mod$Experience_Level <- as.factor(data_mod$Experience_Level)
+data_mod$Activity <- as.factor(data_mod$Activity)
+
+
+# Create a copy for scaling
+data_scaled <- data_mod
+
+# Scale only numeric columns
+data_scaled[numeric_cols] <- scale(data_mod[numeric_cols])
+
+# Calculate Gower's distance
+gower_dist <- daisy(data_scaled, metric = "gower", 
+                   type = list(numeric = numeric_cols,
+                             factor = c("Gender", "Workout_Type", 
+                                      "Experience_Level", "Activity")))
+
+# Convert distance object to matrix
+dist_matrix <- as.matrix(gower_dist)
+
+# Calculate Gram matrix
+n <- nrow(dist_matrix)
+H <- diag(n) - (1/n) * matrix(1, n, n)
+G <- -0.5 * H %*% (dist_matrix^2) %*% H
+
+# Perform eigendecomposition
+eigen_decomp <- eigen(G)
+
+# Calculate the MDS configuration
+mds_config <- cmdscale(gower_dist, k=2, eig=TRUE)
+
+
+# Create a data frame for plotting
+mds_df <- data.frame(
+  X = mds_config$points[,1],
+  Y = mds_config$points[,2]
+)
+
+explained_var <- (mds_config$eig[1:2] / sum(abs(mds_config$eig))) * 100
+
+
+# Create MDS data frame with all relevant variables from original data
+mds_df <- data.frame(
+  X = mds_config$points[,1],
+  Y = mds_config$points[,2],
+  Workout_Type = data_mod$Workout_Type,
+  Activity = data_mod$Activity,
+  Gender = data_mod$Gender,
+  Experience_Level = data_mod$Experience_Level,
+  BMI = data_mod$BMI,
+  Age = data_mod$Age,
+  Workout_Type = data_mod$Workout_Type,
+  Water = data_mod$Water_Intake..liters.,
+  Activity = factor(data_mod$Activity),
+  Session = data_mod$Session_Duration..hours.,
+  Cburn = data_mod$Calories_Burned,
+  Weight = data_mod$Weight..kg.,
+  FatP = data_mod$Fat_Percentage
+)
+
+# Create BMI groups
+mds_df$BMI_group <- cut(mds_df$BMI, breaks=c(0,18.5,25,30,Inf), 
+                       labels=c("Underweight","Normal","Overweight","Obese"))
+```
+
+```{r, fig.cap="Scatter plot for continuous variables", fig.height=3}
+# Load required libraries
+library(ggplot2)
+library(gridExtra)
+
+# Create the plots
+p1 <- ggplot(mds_df, aes(x=X, y=Y, color=Water, size=Weight)) +
+  geom_point(alpha=0.7) +
+  scale_color_viridis_c() +
+  scale_size_continuous(range = c(0.5, 4)) + # Set minimum and maximum sizes
+  theme_minimal() +
+  labs(title="Water Intake and Weight") + 
+  theme(
+    text = element_text(size = 10),  # General text size
+    plot.title = element_text(size = 10, hjust = 0.5),  # Title text size
+    legend.title = element_text(size = 8),  # Legend title size
+    legend.text = element_text(size = 7),  # Legend labels size
+    legend.key.size = unit(0.5, "cm"),  # Size of legend keys
+    legend.spacing.y = unit(0.2, "cm")  # Spacing between legend items
+  ) +
+  guides(
+    size = guide_legend(title = "Weight", override.aes = list(size = 3)),  # Adjust size legend
+    color = guide_colorbar(title = "Water Intake")  # Adjust color legend
+  )
+
+
+p2 <- ggplot(mds_df, aes(x=X, y=Y, color=FatP, size=Cburn)) +
+  geom_point(alpha=0.7) +
+  scale_color_viridis_c() +
+  scale_size_continuous(range = c(0.5, 4)) + # Set minimum and maximum sizes
+  theme_minimal() +
+  labs(title="Fat Percentage and Calories Burnt") +
+  theme(
+    text = element_text(size = 10),  # General text size
+    plot.title = element_text(size = 10, hjust = 0.5),  # Title text size
+    legend.title = element_text(size = 8),  # Legend title size
+    legend.text = element_text(size = 7),  # Legend labels size
+    legend.key.size = unit(0.5, "cm"),  # Size of legend keys
+    legend.spacing.y = unit(0.2, "cm")  # Spacing between legend items
+  ) +
+  guides(
+    size = guide_legend(title = "Calories Burnt", override.aes = list(size = 3)),  # Adjust size legend
+    color = guide_colorbar(title = "Fat Percentage")  # Adjust color legend
+  )
+
+# Arrange the plots side-by-side in a 1x2 grid
+combined_plot <- grid.arrange(p1, p2, ncol = 2)
+```
+
+The two scatterplots (Figure 6) provide a visual representation of relationships between multiple continuous variables on the MDS axes (`X` and `Y`).
+We observe their interactions with each other within the clusters and see if the categorical factors somehow affect their relationships.
+
+1.  Water Intake and Weight (Left Plot):
+
+-   **Water Intake** (color gradient):
+    -   The color scale transitions from **purple (low intake)** to **yellow (high intake)**.
+    -   Higher water intake (yellow points) is concentrated in certain clusters, particularly towards the right-hand side of the MDS plot.
+    -   Lower water intake (purple points) is scattered across other clusters.
+-   **Weight** (size of points):
+    -   Larger point sizes (indicating higher weight) are distributed across all clusters but appear more prominent in the **middle regions** of the plot.
+    -   Lighter weights (smaller points) appear scattered more evenly.
+
+**Relationship to Categorical Factors**: 
+
+- In the **"MDS by Gender"** plot, clusters were separated distinctly by gender.
+Higher water intake may be associated more with **one gender** (e.g., males based on their positioning).
+
+- Experience levels (e.g., **Level 3**) might correspond to higher weights and water intake due to the clustering patterns observed in the **"MDS by Experience Level"** plot.
+
+2.  Fat Percentage and Calories Burnt (Right Plot):
+
+-   **Fat Percentage (FatP)** (color gradient):
+    -   Fat percentage is low (**purple**) in certain clusters (top-right region) and higher (**yellow**) in other areas (bottom-left to middle clusters).
+    -   This suggests that fat percentage varies significantly across different groups.
+-   **Calories Burnt (Cburn)** (size of points):
+    -   Larger points (indicating more calories burnt) appear **concentrated** in the top-right and middle-right clusters.
+    -   Smaller points (low calories burnt) are spread across other clusters.
+
+**Relationship to Categorical Factors**: 
+
+- The **"MDS by Activity"** plot (activity levels 0 and 1) aligns with the observed patterns.
+Higher calorie burn and lower fat percentages may correspond to the **active group** (Activity = 1).
+
+- The **"MDS by Workout Type"** plot showed overlapping clusters, but differences in fat percentage and calorie burn may be linked to specific workout types (e.g., **HIIT or Strength** training), which are known to affect these variables.
+
+```{r, fig.cap="Gower's Method: Experience Level Distribution", fig.height=2.5, fig.width=5.5}
+# Function to perform Gower method
+perform_relms <- function(data, k=2) {
+  # 1. Standardize numeric variables
+  numeric_cols <- sapply(data, is.numeric)
+  data_scaled <- data
+  data_scaled[numeric_cols] <- scale(data[numeric_cols])
+  
+  # 2. Calculate Gower's distance
+  gower_dist <- daisy(data_scaled, metric = "gower")
+  
+  # 3. Convert distance object to matrix
+  dist_matrix <- as.matrix(gower_dist)
+  
+  # 4. Center the distance matrix using double centering
+  n <- nrow(dist_matrix)
+  H <- diag(n) - (1/n) * matrix(1, n, n)
+  G <- -0.5 * H %*% (dist_matrix^2) %*% H
+  
+  # 5. Eigendecomposition
+  eigen_decomp <- eigen(G)
+  
+  # 6. Calculate explained variance
+  explained_var <- eigen_decomp$values[1:k] / sum(abs(eigen_decomp$values)) * 100
+  
+  # 7. Create configuration matrix
+  config <- eigen_decomp$vectors[, 1:k] %*% diag(sqrt(pmax(eigen_decomp$values[1:k], 0)))
+  
+  # Return results
+  return(list(
+    coordinates = config,
+    explained_variance = explained_var,
+    eigenvalues = eigen_decomp$values,
+    gram_matrix = G,
+    numeric_cols = numeric_cols,
+    gower_dist = gower_dist
+  ))
+}
+
+# Read and prepare data
+data_35 <- read.csv("gym_members_updated.csv")
+
+# Convert categorical variables to factors
+data_35$Gender <- as.factor(data_35$Gender)
+data_35$Workout_Type <- as.factor(data_35$Workout_Type)
+data_35$Experience_Level <- as.factor(data_35$Experience_Level)
+data_35$Activity <- as.factor(data_35$Activity)
+
+# Perform RelMS
+relms_result <- perform_relms(data_35)
+
+# Create plotting data frame
+plot_df <- data.frame(
+  X = relms_result$coordinates[,1],
+  Y = relms_result$coordinates[,2],
+  Workout_Type = data_35$Workout_Type,
+  Experience_Level = data_35$Experience_Level,
+  Gender = data_35$Gender,
+  Activity = data_35$Activity
+)
+
+# Create visualizations
+
+# By Experience Level
+p2 <- ggplot(plot_df, aes(x=X, y=Y, color=Experience_Level)) +
+  geom_point(alpha=0.7) +
+  theme_minimal() +
+  labs(title="",
+       x=paste0("First Dimension (", round(relms_result$explained_variance[1], 1), "%)"),
+       y=paste0("Second Dimension (", round(relms_result$explained_variance[2], 1), "%)"))
+
+# Print plots
+print(p2)
+
+# Calculate stress value
+stress <- function(dist_matrix, config) {
+  config_dist <- as.matrix(dist(config))
+  stress <- sqrt(sum((dist_matrix - config_dist)^2) / sum(dist_matrix^2))
+  return(stress)
+}
+
+stress_val <- stress(as.matrix(relms_result$gower_dist), relms_result$coordinates)
+#cat("\nStress value:", stress_val, "\n")
+
+# Calculate correlations with original numeric variables
+correlations <- data.frame(
+  Variable = names(data_35)[relms_result$numeric_cols],
+  Dim1_cor = sapply(data_35[relms_result$numeric_cols], function(x) cor(x, relms_result$coordinates[,1])),
+  Dim2_cor = sapply(data_35[relms_result$numeric_cols], function(x) cor(x, relms_result$coordinates[,2]))
+)
+```
+
+
+For example, here (Figure 7) we can see the clear patterns based on experience level. Members with the same experience level (1, 2, or 3) form distinct, well-separated clusters. The separation indicates that Experience Level strongly influences the structure of the MDS configuration.This suggests that experience-related features, such as session duration, calories burned, and fat percentage, are important drivers of variability.
+
+We also have the stress value of 0.376, which is moderate. This indicates that the MDS configuration captures the major patterns in the data but with some loss of information. While lower stress values (e.g., < 0.2) are ideal, this result is acceptable given the complexity and mixed nature of the dataset.
+
+## RelMS Visualization for Mixed Data According to slides
+
+```{r}
+# Helper function for matrix square root handling complex values
+sqrtm <- function(A) {
+  e <- eigen(A)
+  values <- Re(e$values)  # Take real part
+  vectors <- e$vectors
+  # Zero out negative values
+  values[values < sqrt(.Machine$double.eps)] <- 0
+  sqrt_values <- sqrt(values)
+  return(Re(vectors %*% diag(sqrt_values) %*% Conj(t(vectors))))
+}
+
+# Function to compute Mahalanobis distances
+compute_mahalanobis_dist <- function(data) {
+  # Calculate covariance matrix
+  cov_matrix <- cov(data)
+  
+  # Handle potential non-invertible covariance matrix
+  if(inherits(try(solve(cov_matrix), silent = TRUE), "try-error")) {
+    # Use Moore-Penrose pseudo-inverse if regular inverse fails
+    cov_matrix_inv <- MASS::ginv(cov_matrix)
+  } else {
+    cov_matrix_inv <- solve(cov_matrix)
+  }
+  
+  # Calculate Mahalanobis distances
+  n <- nrow(data)
+  D <- matrix(0, n, n)
+  
+  for(i in 1:n) {
+    for(j in 1:n) {
+      diff <- data[i,] - data[j,]
+      D[i,j] <- t(diff) %*% cov_matrix_inv %*% diff
+    }
+  }
+  
+  return(D)
+}
+
+# Main RelMS function
+perform_relms <- function(data, k=2) {
+  # 1. Distance Selection
+  # Quantitative variables with Mahalanobis distance
+  quant_vars <- data %>% 
+    dplyr::select(Age, Wt, Ht, MaxHR, AvgHR, RestHR, 
+                  CBurn, FatPct, Water, Session, BMI) %>%
+    scale()  # Standardize all quantitative variables
+  D1 <- compute_mahalanobis_dist(quant_vars)
+  
+  # Binary variables
+  binary_vars <- data %>%
+    dplyr::select(Gender, Activity) %>%
+    mutate(across(everything(), ~as.factor(.)))
+  D2 <- as.matrix(daisy(binary_vars, metric = "gower"))^2
+  
+  # Qualitative variables with Gower's distance
+  qual_vars <- data %>%
+    dplyr::select(WType, XP) %>%
+    mutate(across(everything(), ~as.factor(.)))
+  D3 <- as.matrix(daisy(qual_vars, metric = "gower"))^2
+  
+  # 2. Equal geometric variance normalization
+  n <- nrow(data)
+  
+  # Calculate Vk for each distance matrix
+  V1 <- sum(D1) / (2 * n^2)
+  V2 <- sum(D2) / (2 * n^2)
+  V3 <- sum(D3) / (2 * n^2)
+  
+  # Avoid division by zero
+  eps <- sqrt(.Machine$double.eps)
+  V1 <- ifelse(V1 < eps, eps, V1)
+  V2 <- ifelse(V2 < eps, eps, V2)
+  V3 <- ifelse(V3 < eps, eps, V3)
+  
+  # Normalize distance matrices
+  D1_norm <- D1 / V1
+  D2_norm <- D2 / V2
+  D3_norm <- D3 / V3
+  
+  # 3. Combination of metrics
+  # Create centering matrix H
+  H <- diag(n) - (1/n) * matrix(1, n, n)
+  
+  # Calculate individual Gk matrices
+  G1 <- -0.5 * H %*% D1_norm %*% H
+  G2 <- -0.5 * H %*% D2_norm %*% H
+  G3 <- -0.5 * H %*% D3_norm %*% H
+  
+  # Calculate square roots
+  G1_sqrt <- sqrtm(G1)
+  G2_sqrt <- sqrtm(G2)
+  G3_sqrt <- sqrtm(G3)
+  
+  # Combine matrices
+  G <- G1 + G2 + G3 - 
+      (1/3) * (G1_sqrt %*% G2_sqrt + G1_sqrt %*% G3_sqrt + G2_sqrt %*% G3_sqrt)
+  
+  # Ensure G is symmetric
+  G <- (G + t(G))/2
+  
+  # 4. MDS maps
+  eigen_decomp <- eigen(G)
+  values <- Re(eigen_decomp$values)  # Take real part
+  vectors <- Re(eigen_decomp$vectors)  # Take real part
+  
+  # Handle numerical noise
+  values[abs(values) < sqrt(.Machine$double.eps)] <- 0
+  
+  # Calculate explained variance
+  explained_var <- values[1:k] / sum(abs(values)) * 100
+  
+  # Calculate configuration
+  Y <- vectors[, 1:k] %*% diag(sqrt(pmax(values[1:k], 0)))
+  
+  distances <- list(
+    D1_norm = D1_norm,
+    D2_norm = D2_norm,
+    D3_norm = D3_norm
+  )
+  
+  return(list(
+    coordinates = Y,
+    explained_variance = explained_var,
+    eigenvalues = values,
+    G = G,
+    distances = distances
+  ))
+}
+```
+
+
+```{r, fig.cap="RelMS: By Experience Level", fig.height=2.5, fig.width=5}
+# Apply RelMS
+relms_result <- perform_relms(data_clean)
+
+# Create visualization dataframe
+plot_df <- data.frame(
+  X = relms_result$coordinates[,1],
+  Y = relms_result$coordinates[,2],
+  Workout_Type = data_clean$WType,
+  Experience_Level = data_clean$XP,
+  Gender = data_clean$Gender,
+  Activity = data_clean$Activity
+)
+
+p2 <- ggplot(plot_df, aes(x=X, y=Y, color=Experience_Level)) +
+  geom_point(alpha=0.7) +
+  theme_minimal() +
+  labs(title="",
+       x=paste0("Dimension 1 (", round(relms_result$explained_variance[1], 1), "%)"),
+       y=paste0("Dimension 2 (", round(relms_result$explained_variance[2], 1), "%)"))
+
+# Display plots
+p2
+# Print explained variance
+#cat("\nExplained variance:\n")
+#print(round(relms_result$explained_variance, 2))
+```
+
+Using only Gower's method, we know that variables are not normalized for **equal geometric variance**. This can allow certain variable types to dominate the distance calculation. Using the **RelMS method** explained in the slides, we address this limitation by normalizing the contribution of each variable type. Specifically:
+
+  - For **Quantitative variables**, we use **Mahalanobis distance**, which accounts for both correlations between variables and differences in variance. This ensures a more accurate representation of quantitative relationships.
+  
+  - For **Binary** and **Qualitative variables**, we use **Gower's method**. Gower's method is well-suited for mixed-type data because it appropriately handles categorical variables using matching coefficients, @gower1971general.
+  
+  <!-- ; and we do not have missing values, so we do not have to worry about them (more about missing values is discussed in @gower1971general). -->
+
+From the plot (Figure 8), we observe that the **three experience levels** form distinct and well-separated clusters:
+  - The clusters are **vertically differentiated** along **Dimension 2**, suggesting that experience levels strongly influence this dimension.
+  
+  - Within each experience level, the clusters are **compact** and well-aligned, reflecting the structured patterns introduced by the combination of distances and geometric normalization.
+
+**Dimension 1** primarily explains variation across all observations (**18.2%**), while **Dimension 2** captures additional variation (**16.4%**), showing clear vertical differentiation between clusters. Compared to the Gower-only method, the use of **Mahalanobis distance** for quantitative variables enhances the separation of clusters and leads to a more balanced representation of the data structure.
+
+RelMS combines the **normalized Gram matrices** (\(G_1, G_2, G_3\)) to ensure that all variable types contribute **equally** to the distance structure. By balancing these contributions, the first two dimensions explain a larger proportion of the total variance, resulting in clearer and more interpretable clusters. In contrast, the Gower method may spread variance across additional dimensions due to the unequal contributions of variable types.
+
+This demonstrates that RelMS, with Mahalanobis and Gower distances, provides a **more robust and structured representation** of the data compared to using Gower's method alone. The experience levels are now more distinguishable, and the patterns are better captured.
+
+
+## Variable Partial Influence on the Principal coordinates
+
+```{r, fig.cap="Variable Influence on MDS Configuration", fig.height=2.9}
+# Function to calculate partial influence for quantitative variables
+# Function to calculate partial influence for qualitative variables
+calculate_qual_influence <- function(data, mds_coords, variable_name) {
+  x_j <- data[[variable_name]]
+  n <- length(x_j)
+  categories <- levels(x_j)
+  partial_coords <- matrix(0, nrow = length(categories), ncol = 2)
+  for(i in seq_along(categories)) {
+    virtual_unit <- as.numeric(x_j == categories[i])
+    x_centered <- scale(virtual_unit, center = TRUE, scale = FALSE)
+    projection <- t(x_centered) %*% mds_coords / sqrt(sum(x_centered^2))
+    partial_coords[i,] <- projection
+  }
+  return(data.frame(
+    category = categories,
+    coord1 = partial_coords[,1],
+    coord2 = partial_coords[,2],
+    variable = variable_name
+  ))
+}
+
+# Function to calculate partial influence for qualitative variables
+calculate_quant_influence <- function(data, mds_coords, variable_name) {
+  x_j <- data[[variable_name]]
+  n <- length(x_j)
+  
+  # Use more specific points for the trajectory
+  sorted_indices <- order(x_j)
+  selected_indices <- seq(1, n, length.out = min(20, n))
+  t_values <- x_j[sorted_indices[selected_indices]]
+  
+  partial_coords <- matrix(0, nrow = length(t_values), ncol = 2)
+  
+  for(i in seq_along(t_values)) {
+    t <- t_values[i]
+    virtual_unit <- rep(0, n)
+    virtual_unit[sorted_indices[selected_indices[i]]] <- 1
+    
+    x_centered <- scale(virtual_unit, center = TRUE, scale = FALSE)
+    projection <- t(x_centered) %*% mds_coords / sqrt(sum(x_centered^2))
+    partial_coords[i,] <- projection
+  }
+  
+  return(data.frame(
+    t = t_values,
+    coord1 = partial_coords[,1],
+    coord2 = partial_coords[,2],
+    variable = variable_name
+  ))
+}
+
+# Prepare data and perform MDS
+numeric_vars <- c("Age", "Wt", "Ht", "MaxHR", "AvgHR", "RestHR", 
+                 "CBurn", "FatPct", "Water", "Session", "BMI")
+categorical_vars <- c("Gender", "WType", "XP", "Activity")
+
+# Calculate distance matrix and perform MDS
+dist_matrix <- daisy(data_clean, metric = "gower")
+mds_result <- cmdscale(dist_matrix, k=2, eig=TRUE)
+
+# Calculate influences for quantitative variables
+quant_influences <- lapply(numeric_vars, function(var) {
+  calculate_quant_influence(data_clean, mds_result$points, var)
+})
+quant_influences <- do.call(rbind, quant_influences)
+
+# Calculate influences for qualitative variables
+qual_influences <- lapply(categorical_vars, function(var) {
+  calculate_qual_influence(data_clean, mds_result$points, var)
+})
+qual_influences <- do.call(rbind, qual_influences)
+
+# Create plots
+# Quantitative variables plot
+p1 <- ggplot(quant_influences, aes(x = coord1, y = coord2, color = variable, group = variable)) +
+  geom_path(arrow = arrow(length = unit(0.2, "cm"), ends = "last"), size = 0.5, alpha = 0.7) +
+  geom_point(size = 1, alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "",
+       x = "First Principal Coordinate",
+       y = "Second Principal Coordinate") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 11),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 9)) +
+  scale_color_manual(values = c(
+    "Age" = "#E41A1C",      # Red
+    "AvgHR" = "#377EB8",    # Blue
+    "BMI" = "#4DAF4A",      # Green
+    "CBurn" = "#984EA3",    # Purple
+    "FatPct" = "#FF7F00",   # Orange
+    "Ht" = "#FFFF33",       # Yellow
+    "MaxHR" = "#A65628",    # Brown
+    "RestHR" = "#F781BF",   # Pink
+    "Session" = "#999999",   # Grey
+    "Water" = "#66C2A5",    # Turquoise
+    "Wt" = "#FC8D62"        # Coral
+  ), name = "Variables") +
+  coord_fixed()
+
+
+p2 <- ggplot(qual_influences, aes(x = coord1, y = coord2, color = variable, group = variable)) +
+  geom_path(arrow = arrow(length = unit(0.2, "cm"), ends = "last"), size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "",
+       x = "First Coordinate",
+       y = "Second Coordinate") +
+  theme(legend.position = "right") +
+  scale_color_discrete(name = "Variables")
+
+# Display plots side by side
+#grid.arrange(p1, p2, ncol=2)
+
+# Print correlations with principal coordinates for quantitative variables
+correlations <- sapply(numeric_vars, function(var) {
+  c(
+    cor(data_clean[[var]], mds_result$points[,1]),
+    cor(data_clean[[var]], mds_result$points[,2])
+  )
+})
+correlation_matrix <- t(correlations)
+colnames(correlation_matrix) <- c("PC1", "PC2")
+
+p1 
+# p2
+
+
+```
+
+
+```{r, fig.cap="Influence of Qualitative Variables (Gower)", fig.height=2.9, fig.width=4}
+# Qualitative variables plot
+# p2 <- ggplot(qual_influences, aes(x = coord1, y = coord2, color = variable, group = variable)) +
+#   geom_path(arrow = arrow(length = unit(0.2, "cm"), ends = "last"), size = 1) +
+#   geom_point(size = 2) +
+#   theme_minimal() +
+#   labs(title = "Influence of Qualitative Variables (Gower)",
+#        x = "First Coordinate",
+#        y = "Second Coordinate") +
+#   theme(legend.position = "right") +
+#   scale_color_discrete(name = "Variables")
+# 
+# # Display plots side by side
+# #grid.arrange(p1, p2, ncol=2)
+p2
+# # Print correlations with principal coordinates for quantitative variables
+# correlations <- sapply(numeric_vars, function(var) {
+#   c(
+#     cor(data_clean[[var]], mds_result$points[,1]),
+#     cor(data_clean[[var]], mds_result$points[,2])
+#   )
+# })
+# correlation_matrix <- t(correlations)
+# colnames(correlation_matrix) <- c("PC1", "PC2")
+#print("Correlations of quantitative variables with principal coordinates:")
+#print(round(correlation_matrix, 3))
+
+# Print mean coordinates for each level of categorical variables
+#cat("\nMean coordinates for categorical variables:\n")
+#for(var in categorical_vars) {
+  #cat("\n", var, ":\n")
+  #means <- aggregate(mds_result$points, by=list(data_clean[[var]]), mean)
+  #print(means)
+#}
+```
+
+
+
+From the first plot (Figure 9), we can see that many variables have overlapping trajectories near the center, indicating similar or minimal influence on the MDS configuration. However, variables such as FatPct (orange) and Water (turquoise) display more pronounced and directional paths, suggesting they contribute more significantly to the variation in the MDS space. In contrast, variables like BMI and Ht exhibit shorter, less directional trajectories, indicating weaker or less distinct influence.
+
+From the second plot (Figure 10), we see that **Gender** and **Activity** have the most significant influence on the MDS configuration, as evidenced by their long and directional trajectories across the first and second coordinates. These variables demonstrate clear separation between their categories, indicating a strong contribution to the variation in the MDS space. In contrast, **WType** remains close to the origin, suggesting limited variation and minimal influence compared to other variables. Overall, the analysis reveals that **Gender** and **Activity** play a dominant role in shaping the MDS structure, while **WType** has a comparatively smaller impact.
+
+
+## Stability Analysis
+
+```{r, fig.height=2.2}
+library(ggplot2)
+library(gridExtra)
+set.seed(123)
+
+# Function to normalize eigenvalues to [0,1] range
+normalize_eigenvalues <- function(eig) {
+  total_var <- sum(abs(eig))
+  return(eig / total_var)
+}
+
+# Modified perform_mds_analysis function to return normalized eigenvalues
+perform_mds_analysis <- function(data_sample) {
+  dist_matrix <- daisy(data_sample, metric = "gower")
+  n <- nrow(as.matrix(dist_matrix))
+  H <- diag(n) - (1/n) * matrix(1, n, n)
+  G <- -0.5 * H %*% (as.matrix(dist_matrix)^2) %*% H
+  
+  eigen_decomp <- eigen(G)
+  # Normalize eigenvalues
+  norm_eigenvals <- normalize_eigenvalues(eigen_decomp$values[1:3])
+  return(norm_eigenvals)
+}
+
+
+# Optimized bootstrap function with progress bar
+bootstrap_mds <- function(data, B = 100, file_path = "rds/bootstrap_results.rds") { # Reduced default bootstraps
+    # Check if the results file already exists
+  if (file.exists(file_path)) {
+    message("Results file found. Loading results from file...\n")
+    results <- readRDS(file_path)  # Load saved results
+  } else {
+    message("No results file found. Running bootstrap analysis...\n")
+  
+  n <- nrow(data)
+  
+  # Get parent sample eigenvalues
+  message("Computing parent sample eigenvalues...\n")
+  parent_eigenvals <- perform_mds_analysis(data)
+  
+  # Matrix to store only first 3 eigenvalues
+  boot_eigenvals <- matrix(0, nrow = B, ncol = 3)
+  
+  # Create progress bar
+  message("Performing bootstrap iterations...\n")
+  pb <- txtProgressBar(min = 0, max = B, style = 3)
+  
+  # Perform bootstrap
+  for(i in 1:B) {
+    # Generate bootstrap sample indices
+    boot_indices <- sample(1:n, size = n, replace = TRUE)
+    
+    # Get eigenvalues for bootstrap sample
+    boot_eigenvals[i,] <- perform_mds_analysis(data[boot_indices, ])
+    
+    # Update progress bar
+    setTxtProgressBar(pb, i)
+  }
+  
+  close(pb)
+  
+    # Combine results into a list
+    results <- list(
+      parent = parent_eigenvals,
+      bootstrap = boot_eigenvals
+    )
+    
+    # Save results to file
+    message("Saving results to file...\n")
+    saveRDS(results, file_path)
+  }
+  return(results);
+}
+
+plot_stability <- function(parent_vals, boot_vals, pairs = list(c(1,2), c(1,3), c(2,3))) {
+
+  
+  plots <- list()
+  
+  for(pair in pairs) {
+    i <- pair[1]
+    j <- pair[2]
+    
+    x <- boot_vals[,i]
+    y <- boot_vals[,j]
+    boot_centroids <- colMeans(boot_vals)
+    
+    # Calculate ellipse parameters
+    cov_matrix <- cov(cbind(x, y))
+    eigen_decomp <- eigen(cov_matrix)
+    angle <- atan2(eigen_decomp$vectors[2,1], eigen_decomp$vectors[1,1])
+    
+    # 95% confidence ellipse
+    chi_square <- qchisq(0.95, df = 2)
+    a <- sqrt(chi_square * eigen_decomp$values[1])
+    b <- sqrt(chi_square * eigen_decomp$values[2])
+    
+    # Generate ellipse points
+    theta <- seq(0, 2*pi, length.out = 100)
+    ellipse_data <- data.frame(
+      x = boot_centroids[i] + a*cos(theta)*cos(angle) - b*sin(theta)*sin(angle),
+      y = boot_centroids[j] + a*cos(theta)*sin(angle) + b*sin(theta)*cos(angle)
+    )
+    
+    # Set dynamic limits for axes
+    x_range <- range(c(x, parent_vals[i], ellipse_data$x))
+    y_range <- range(c(y, parent_vals[j], ellipse_data$y))
+    
+    # Create plot
+    p <- ggplot() +
+      geom_point(data = data.frame(x = x, y = y), aes(x = x, y = y), 
+                 alpha = 0.3, size = 1.5, color = "black") +
+      geom_path(data = ellipse_data, aes(x = x, y = y), color = "red", linewidth = 1) +
+      geom_point(aes(x = boot_centroids[i], y = boot_centroids[j]), 
+                color = "blue", size = 4, shape = 19) +
+      geom_point(aes(x = parent_vals[i], y = parent_vals[j]), 
+                color = "black", shape = 3, size = 5) +
+      geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+      scale_x_continuous(limits = c(x_range[1] - 0.05, x_range[2] + 0.05)) +
+      scale_y_continuous(limits = c(y_range[1] - 0.05, y_range[2] + 0.05)) +
+      labs(x = paste("Principal Coordinate", i),
+           y = paste("Principal Coordinate", j),
+           title = paste("Stability Plot: Coordinate", i, "vs", j)) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 9),
+        axis.title = element_text(size = 9),
+        axis.text = element_text(size = 9)
+      ) +
+      coord_fixed()  # Ensures equal scaling of axes
+    
+    plots[[length(plots) + 1]] <- p
+  }
+  
+  # Arrange plots side by side
+  gridExtra::grid.arrange(grobs = plots, ncol = length(pairs))
+}
+
+
+# cat("Starting stability analysis...\n")
+results <- bootstrap_mds(data_clean, B = 100)  # Reduced number of bootstraps
+
+# Create stability plots
+# cat("\nCreating stability plots...\n")
+#plot_stability(results$parent, results$bootstrap)
+
+# Print summary statistics
+# cat("\nStability Analysis Summary:\n")
+# boot_stats <- apply(results$bootstrap, 2, function(x) {
+#   c(mean = mean(x), 
+#     sd = sd(x), 
+#     ci_lower = quantile(x, 0.025), 
+#     ci_upper = quantile(x, 0.975))
+# })
+# colnames(boot_stats) <- paste("Eigenvalue", 1:3)
+# print(round(boot_stats, 4))
+
+# Only plot the first 2 coordinates
+plot_stability(normalize_eigenvalues(results$parent), 
+               t(apply(results$bootstrap, 1, normalize_eigenvalues)), 
+               pairs = list(c(1, 2)))
+# Only plot the first 2 coordinates
+plot_stability(normalize_eigenvalues(results$parent), 
+               t(apply(results$bootstrap, 1, normalize_eigenvalues)), 
+               pairs = list(c(1, 3)))
+# Only plot the first 2 coordinates
+plot_stability(normalize_eigenvalues(results$parent), 
+               t(apply(results$bootstrap, 1, normalize_eigenvalues)), 
+               pairs = list(c(2, 3)))
+
+```
+
+```{r}
+library(knitr)
+
+# Compute the stability summary
+boot_stats <- apply(results$bootstrap, 2, function(x) {
+  c(mean = mean(x), 
+    sd = sd(x), 
+    ci_lower = quantile(x, 0.025), 
+    ci_upper = quantile(x, 0.975))
+})
+colnames(boot_stats) <- paste0("$\\lambda_{", 1:3, "}$")
+
+# Round and transpose for better readability
+boot_stats <- round(t(boot_stats), 4)
+
+# Display in a nice table
+kable(boot_stats, format = "pipe", align = "c",
+      caption = "Stability Analysis Summary")
+```
+
+
+
+
+
+
+
+The Stability Analysis Summary Table shows the mean normalized eigenvalues for the first three principal coordinates: Eigenvalue 1 is 0.4369, Eigenvalue 2 is 0.3508, and Eigenvalue 3 is 0.2123. The standard deviations (SD) are small, with Eigenvalue 1 having an SD of 0.0111, indicating very low variability. Similarly, Eigenvalue 2 has an SD of 0.0121, and Eigenvalue 3 has an SD of 0.0066, reflecting their stability. The 95% confidence intervals (CIs) confirm this robustness, with Eigenvalue 1 ranging from 0.4184 to 0.4614, Eigenvalue 2 from 0.3242 to 0.3706, and Eigenvalue 3 from 0.1983 to 0.2256. Overall, the eigenvalues remain consistent across bootstrap resampling, with Eigenvalue 1 explaining the largest proportion of variability.
+
+The Coordinate 1 vs 2 plot visualizes the bootstrap estimates for the first two principal coordinates. The points, which represent the bootstrap eigenvalues, are tightly clustered within the 95% confidence region (red ellipse). The centroid (mean) of the bootstrap estimates is shown as a blue dot, while the black cross marks the original pair of eigenvalues. The proximity of the bootstrap points to the diagonal line (y=x) suggests strong consistency between Coordinate 1 and Coordinate 2. The small spread within the confidence ellipse highlights the stability of these coordinates.
+
+In the Coordinate 1 vs 3 plot, the bootstrap estimates are again tightly clustered around the centroid (blue dot) and fall within the red confidence ellipse. Coordinate 3 displays slightly more variability compared to Coordinate 2, but the spread remains small, indicating stability. The black cross, representing the original eigenvalue pair, lies close to the bootstrap centroid, reinforcing the consistency of the results. This plot demonstrates that the third coordinate, while contributing less variability than Coordinate 1, remains stable under resampling.
+
+The Coordinate 2 vs 3 plot shows minimal spread of the bootstrap estimates, with points concentrated around the bootstrap centroid (blue dot) and within the red confidence ellipse. The clustering indicates strong stability for these two coordinates, as the confidence region is tight and well-defined. The black cross marking the original pair of eigenvalues falls well within the confidence region, confirming the consistency of Coordinate 2 and Coordinate 3.
+
+
+# Clustering
+
+We show scatter plot coloring categories as mentioned by the data visualization protocol, @stats4020029.
+
+```{r}
+# Load required libraries
+library(tidyverse)  # For data manipulation and visualization
+library(cluster)    # For clustering algorithms
+library(factoextra) # For clustering visualization
+library(NbClust)    # For determining optimal number of clusters
+
+# Read the data
+gym_data <- read.csv("gym_members_updated.csv")
+
+# 1. Data Preprocessing
+# Remove missing values if any
+gym_data_clean <- na.omit(gym_data)
+
+# Select numerical variables for clustering
+numeric_cols <- c("Age", "Weight..kg.", "Height..m.", "Max_BPM", "Avg_BPM", 
+                 "Resting_BPM", "Session_Duration..hours.", "Calories_Burned",
+                 "Fat_Percentage", "Water_Intake..liters.", "BMI")
+cluster_data <- gym_data_clean[numeric_cols]
+
+# Scale the data (important for clustering)
+scaled_data <- scale(cluster_data)
+
+# 3. Perform K-means clustering
+# Let's use k=3 as an example (adjust based on above analysis)
+set.seed(123)  # for reproducibility
+kmeans_result <- kmeans(scaled_data, centers = 3, nstart = 25)
+
+# 4. Hierarchical clustering
+# Calculate distance matrix
+dist_matrix <- dist(scaled_data, method = "euclidean")
+
+# Perform hierarchical clustering
+hc_complete <- hclust(dist_matrix, method = "complete")
+hc_average <- hclust(dist_matrix, method = "average")
+hc_single <- hclust(dist_matrix, method = "single")
+
+# 5. Analyze cluster characteristics
+# Add cluster assignments to original data
+gym_data_clean$cluster <- kmeans_result$cluster
+
+# Calculate cluster summaries
+cluster_summary <- gym_data_clean %>%
+  group_by(cluster) %>%
+  summarise(across(all_of(numeric_cols), mean))
+```
+
+```{r, fig.height=1.8}
+library(factoextra)
+library(gridExtra)
+
+# Elbow Method
+p1 <- fviz_nbclust(scaled_data, kmeans, method = "wss") +
+  labs(title = "Elbow Method") + 
+  theme(
+        plot.title = element_text(hjust = 0.5, size = 9),
+        axis.title = element_text(size = 9),
+        axis.text = element_text(size = 9)
+      ) 
+
+# Silhouette Method
+p2 <- fviz_nbclust(scaled_data, kmeans, method = "silhouette") +
+  labs(title = "Silhouette Method") + 
+  theme(
+        plot.title = element_text(size = 9),
+        axis.title = element_text(size = 9),
+        axis.text = element_text(size = 9)
+      ) 
+
+# Combine plots into one grid
+grid.arrange(p1, p2, ncol = 2)
+
+```
+
+```{r, fig.height=2.3, fig.width=5, fig.cap="K-means Clustering Results"}
+# Visualize the clusters
+fviz_cluster(kmeans_result, data = scaled_data,
+             geom = "point",
+             ellipse.type = "convex",
+             main = "")
+
+# print(cluster_summary)
+
+```
+
+```{r, fig.height=2.5}
+# Plot dendrograms
+par(mfrow = c(1, 3))
+plot(hc_complete, main = "Complete Linkage", xlab = "", sub = "")
+plot(hc_average, main = "Average Linkage", xlab = "", sub = "")
+plot(hc_single, main = "Single Linkage", xlab = "", sub = "")
+```
+
+The `Elbow Method` identifies k = 3 as the optimal number of clusters, where the total within-cluster sum of squares stabilizes. The `Silhouette Method` confirms k = 3 with the highest average silhouette width, indicating well-separated and compact clusters. \
+
+Complete Linkage produces well-separated and tight clusters, while Average Linkage balances within-cluster distances effectively. In contrast, Single Linkage shows elongated clusters due to a chaining effect, making it less suitable for clear separation.
+
+The PCA plot shows three distinct clusters : \
+**Cluster 1**: Members with moderate BMI and activity levels \
+**Cluster 2**: Members with higher BMI and moderate calorie burn. \
+**Cluster 3**: Active members with lower BMI and high calorie burn. 
+
+## K-means Clustering of calories burnt vs fat percentage (CBurn vs FatPct)
+
+We show males and females in different plots comparing the calories burned with the fat percentage color coding each point depending on the reported experience level.
+
+```{r, fig.height=2.5, fig.cap="K-means clustering of calories burnt vs fat percentage (CBurn vs FatPct)"}
+
+data_male <- data %>%
+  filter(Gender == "Male")
+
+data_female <- data %>%
+  filter(Gender == "Female")
+
+
+p1 <- ggplot(data_male, aes(x = CBurn, y = FatPct, color = XP)) +
+    geom_point(size = 1) +                  # Size of points
+    scale_color_manual(values = c("red", "blue", "green")) + # Custom cluster colors
+    labs(title = "CBurn vs FatPct (Male)") +
+    theme_minimal()+
+      theme(plot.title = element_text(size = 10))
+
+p2 <- ggplot(data_female, aes(x = CBurn, y = FatPct, color = XP)) +
+    geom_point(size = 1) +                  # Size of points
+    scale_color_manual(values = c("red", "blue", "green")) + # Custom cluster colors
+    labs(title = "CBurn vs FatPct (Female)") +
+    theme_minimal()+
+      theme(plot.title = element_text(size = 10))
+
+p1 + p2
+
+```
+
+-   Through the scatter plot, we get three clusters based on gym members' experience level.
+-   The green cluster has the highest average calories burnt and lower body fat percentage compared to the 2 other clusters; which indicates members with advanced experience as they engage in more intensive workouts.
+-   Meanwhile red and blue clusters show a larger overlap, indicating similar levels of calorie burn and body fat percentage. However, the blue cluster tends to have a slightly higher fat percentage than the red cluster.
+
+
+## K-means Clustering of Water Intake vs. Session Duration
+
+
+- Through the scatter plot, we get three clusters based on gym members' experience level. 
+- The green cluster has the highest average calories burnt and lower body fat percentage compared to the 2 other clusters; which indicates members with advanced experience as they engage in more intensive workouts. 
+- Meanwhile red and blue clusters show a larger overlap, indicating similar levels of calorie burn and body fat percentage. However, the blue cluster tends to have a slightly higher fat percentage than the red cluster.
+
+
+## K-means Clustering of Water Intake vs. Session Duration 
+
+We show the relation between Water Intake and Session Duration for males and femals depending on their experience level. 
+
+```{r, fig.height=2.5, fig.cap="K-Medoids: Water Intake vs Session Duration"}
+library(cluster)
+
+# Subset numerical data
+water_session <- gym_data_clean[, c("Water_Intake..liters.", "Session_Duration..hours.")]
+
+# Perform K-Medoids clustering
+pam_result <- pam(water_session, k = 3)
+
+# Add cluster assignments
+gym_data_clean$medoid_cluster <- pam_result$clustering
+
+# Visualize the clusters
+fviz_cluster(pam_result, data = water_session, geom = "point",
+             ellipse.type = "convex", main = "")
+
+```
+
+This clustering highlights distinct hydration and activity patterns among gym members. The red cluster represents individuals with high water intake and varied session durations, the blue cluster includes those with moderate water intake and balanced session durations, and the green cluster corresponds to individuals with low water intake and predominantly shorter session duration.
+
+## K-Means Clustering of BMI vs. Activity Level 
+
+Here we plot the BMI vs the Activity Level while color coding the level. 
+
+```{r, fig.height=3, fig.cap="K-Prototypes Clustering: BMI vs Activity Level"}
+# Correct the column selection
+mixed_data <- gym_data_clean[, c("BMI", "Activity", "Experience_Level")]
+
+# Convert Experience_Level to a factor
+mixed_data$Experience_Level <- as.factor(mixed_data$Experience_Level)
+
+# Perform K-Prototypes clustering
+set.seed(123)
+kproto_result <- kproto(mixed_data, k = 3, nstart = 10, verbose=FALSE)
+
+# Add cluster assignments
+gym_data_clean$kproto_cluster <- kproto_result$cluster
+
+# Visualize the clusters
+p1 <- ggplot(gym_data_clean, aes(x = BMI, y = Activity, color = as.factor(kproto_cluster))) +
+    geom_jitter(size = 1, width = 0, height = 0.3) +
+    scale_color_manual(values = c("red", "blue", "green")) +
+    labs(title = "", color = "Cluster") +
+    theme_minimal()
+
+print(p1)
+
+
+```
+
+- This clustering highlights distinct BMI and activity patterns among gym members. The red cluster represents individuals with high BMI and low activity levels, suggesting minimal engagement in physical activity.
+- Meanwhile, The blue cluster includes individuals with low BMI but also low activity levels, indicating a less active lifestyle despite maintaining a lower body mass. The green cluster corresponds to individuals with moderate BMI and high activity levels, reflecting a group of active members who maintain a healthier balance between body weight and fitness engagement.
+
+
+## K-Means Clustering: BMI vs. Calories Burned (BMI vs. CBurn)
+
+We show a scatter plot of BMI vs the Calaries Burned for males and females according to the reported experience level. 
+
+```{r, fig.height=2.5, fig.cap="K-Means Clustering: BMI vs. Calories Burned (BMI vs. CBurn)"}
+p1 <- ggplot(data_male, aes(x = BMI, y = CBurn, color = XP)) +
+    geom_point(size = 1) +                  # Size of points
+    scale_color_manual(values = c("red", "blue", "green")) + # Custom cluster colors
+    labs(title = "BMI vs. CBurn (Male)") +
+    theme_minimal()+
+      theme(plot.title = element_text(size = 8))
+
+p2 <- ggplot(data_female, aes(x = BMI, y = CBurn, color = XP)) +
+    geom_point(size = 1) +                  # Size of points
+    scale_color_manual(values = c("red", "blue", "green")) + # Custom cluster colors
+    labs(title = "BMI vs. CBurn (Female)") +
+    theme_minimal()+
+      theme(plot.title = element_text(size = 8))
+
+p1 + p2
+```
+
+- In the left plot, the green cluster represents male members with higher BMI who burn significantly more calories, suggesting they engage in high-intensity workouts despite their higher body mass.
+
+- In contrast, the red and blue clusters overlap, indicating members with moderate BMI but lower calorie burn, likely reflecting less intense workout routines. Overall, the green cluster highlights experienced and active individuals, while the red cluster identifies members who may benefit from targeted fitness programs to improve workout performance. 
+
+
+-   The green cluster shows a trend where members have a higher BMI and burn significantly more calories compared to the red and blue clusters. This suggests that members in this group might engage in high-intensity workouts, despite having a higher BMI.
+
+-   The red and blue clusters covers one another significantly, with members having moderate BMI values and burning fewer calories compared to the green cluster. This overlap indicates that members in these clusters likely follow less intense workout routines.
+
+Overall, the green cluster indicates experienced members who exhibits high performance in either burning calories, longer session or higher water intake.
+Meanwhile the red and blue are related to less experienced members as they demonstrate lower performances.
+These insights would help gym management in identifying members who may need personalized training programs (as an example, red cluster members may need fitness plans to improve their activity level or session level).
+
+- As for female plot, a similar trend is observed. The green cluster highlights members with higher calorie burns and moderate BMI, suggesting greater engagement in physical activity. The blue cluster represents members with moderate calorie burn, while the red cluster corresponds to those with the lowest calorie burn and BMI, indicating minimal workout intensity or experience.
+
+
+## K-Means Clustering: Age vs. Calories Burned (Age vs. CBurn)
+
+Here we compare the age and calories burned for males and females according to the reported experience level (which we color coded).
+
+```{r, fig.height=2.5, fig.cap="K-Means Clustering: Age vs. Calories Burned (Age vs. CBurn)"}
+p1 <- ggplot(data_male, aes(x = Age, y = CBurn, color = XP)) +
+    geom_point(size = 1) +                  # Size of points
+    scale_color_manual(values = c("red", "blue", "green")) + # Custom cluster colors
+    labs(title = "Age vs. CBurn (Male)") +
+    theme_minimal()+
+      theme(plot.title = element_text(size = 10))
+
+p2 <- ggplot(data_female, aes(x = Age, y = CBurn, color = XP)) +
+    geom_point(size = 1) +                  # Size of points
+    scale_color_manual(values = c("red", "blue", "green")) + # Custom cluster colors
+    labs(title = "Age vs. CBurn (Female)") +
+    theme_minimal()+
+      theme(plot.title = element_text(size = 10))
+
+p1 + p2
+
+```
+
+
+- In the left plot, the green cluster represents males with higher calorie burns across various age groups, suggesting that these individuals engage in high-intensity workouts and are likely more experienced. 
+- For instance, the blue cluster includes members with moderate calorie burns, reflecting consistent but less intense activity. The red cluster corresponds to members with the lowest calorie burns, indicating minimal physical engagement, often seen in less experienced or beginner members.
+- At the same time, a similar trend emerges in the female's plot. 
+
+## K-Means Clustering of Age vs. Activity Level 
+
+We show the relation between the age and activity level based on the experience level. 
+
+```{r, fig.height=2.5, fig.width=6, fig.cap="K-Prototypes Clustering: Age vs Activity Level with XP"}
+
+# Select 'Age', 'Activity', and 'Experience_Level' for clustering
+mixed_data <- gym_data_clean[, c("Age", "Activity", "Experience_Level")]
+mixed_data$Experience_Level <- as.factor(mixed_data$Experience_Level)
+
+# Perform K-Prototypes clustering
+set.seed(123)  # For reproducibility
+kproto_result <- kproto(mixed_data, k = 3, nstart = 10, verbose=FALSE)
+
+# Add cluster assignments back to the original data
+gym_data_clean$kproto_cluster <- kproto_result$cluster
+
+# Visualize the clusters: Age vs Activity Level with XP
+p <- ggplot(gym_data_clean, aes(x = Age, y = Activity, color = as.factor(Experience_Level))) +
+  geom_jitter(size = 1, width = 0, height = 0.3) +  # Add slight jitter for clarity
+  scale_color_manual(values = c("red", "blue", "green")) +  # XP colors
+  facet_wrap(~kproto_cluster) +  # Facet the plot by k-prototypes clusters
+  labs(title = "",
+       x = "Age",
+       y = "Activity Level",
+       color = "XP (Experience Level)") +
+  theme_minimal()
+
+# Print the plot
+print(p)
+```
+
+
+The K-Prototypes clustering of Age vs Activity Level reveals three distinct clusters : 
+- Cluster 1 consists primarily of younger individuals (20-30 years old), where the majority are inactive (Activity = 0) and have beginner experience levels (XP = 1, red).
+- Cluster 2 includes middle-aged members (30-50 years) with mixed activity levels, where active members (Activity = 1) show a broader range of experience (XP = 1, 2, and 3).
+- Cluster 3 highlights older members (40-60 years) who are predominantly active and have higher experience levels (XP = 2 and 3, blue and green). 
+
+The presence of inactive younger members and highly active older members emphasizes that experience and commitment, rather than age, drive consistent gym participation. 
+
+
+## K-means Clustering of Age vs fat percentage (Age vs FatPct)
+
+In the following plot, we show the scatter comparing the age and the fat percentage of males and females depending taking into account the reported experience level.
+
+```{r, fig.height=2.5, fig.cap="K-Prototypes Clustering: Age vs Fat Percentage with XP"}
+
+# Perform K-Prototypes clustering
+set.seed(123)  # For reproducibility
+kproto_result <- kproto(mixed_data, k = 3, nstart = 10, verbose = FALSE)
+
+# Add cluster assignments back to the original data
+gym_data_clean$kproto_cluster <- kproto_result$cluster
+
+# Visualize the clusters: Age vs Fat Percentage with XP
+p <- ggplot(gym_data_clean, aes(x = Age, y = Fat_Percentage, color = as.factor(Experience_Level))) +
+  geom_jitter(size = 1, width = 0, height = 0.3) +  # Add slight jitter for clarity
+  scale_color_manual(values = c("red", "blue", "green")) +  # XP colors
+  facet_wrap(~kproto_cluster) +  # Facet the plot by K-Prototypes clusters
+  labs(title = "",
+       x = "Age",
+       y = "Fat Percentage",
+       color = "XP (Experience Level)") +
+  theme_minimal()
+
+# Print the plot
+print(p)
+
+```
+
+- Members with higher experience levels (XP 3, green) consistently exhibit lower fat percentages across all age groups, particularly in Cluster 3 (ages 40–60). 
+
+- In contrast, beginners (XP 1, red) are concentrated in Clusters 1 and 2, where younger (20–30) and middle-aged (30–50) members display higher fat percentages. 
+
+- Intermediate members (XP 2, blue) fall between these extremes, showing moderate fat levels. 
+Overall, experience level strongly influences fat percentage, with advanced members achieving better fitness outcomes, regardless of age.
+
+## K-Prototype Clustering
+
+```{r, fig.height=2, fig.cap="Elbow Method for Optimal k", message=FALSE}
+
+# # Read and prepare the data
+# data_K <- read.csv("gym_members_updated.csv")
+# 
+# # Convert categorical variables to factors
+# data_K$Workout_Type <- as.factor(data_K$Workout_Type)
+# data_K$Gender <- as.factor(data_K$Gender)
+# data_K$Activity <- as.factor(data_K$Activity)
+# data_K$Experience_Level <- as.factor(data_K$Experience_Level)
+# 
+# # Select numerical variables for scaling
+# num_vars <- c("Age", "Weight..kg.", "Height..m.", "Max_BPM", "Avg_BPM", 
+#               "Resting_BPM", "Session_Duration..hours.", "Calories_Burned",
+#               "Fat_Percentage", "Water_Intake..liters.", "BMI")
+# 
+# # Scale numerical variables
+# data_scaled <- data_K
+# data_scaled[num_vars] <- scale(data_K[num_vars])
+# 
+# # Prepare data for kproto
+# X <- data_scaled[c(num_vars, "Workout_Type", "Gender", "Activity", "Experience_Level")]
+# 
+# 
+# kproto_cost_file <- "rds/kproto_costs.rds"
+# 
+# if (file.exists(kproto_cost_file)) {
+#   message("Loading previously saved elbow costs...\n")
+#   cost <- readRDS(kproto_cost_file)
+# } else {
+#   message("No saved elbow costs found. Running elbow method...\n")
+#   set.seed(123)
+#   cost <- numeric(10)
+#   for (k in 1:10) {
+#     kp <- kproto(X, k = k, nstart = 5, verbose = FALSE)
+#     cost[k] <- kp$tot.withinss
+#   }
+#   saveRDS(cost, kproto_cost_file)
+#   message("Elbow costs saved to file.\n")
+# }
+# 
+# 
+# # Plot elbow curve
+# elbow_plot <- ggplot(data.frame(k = 1:10, cost = cost), aes(x = k, y = cost)) +
+#   geom_line() +
+#   geom_point() +
+#   labs(title = "",
+#        x = "Number of Clusters (k)",
+#        y = "Total Within-Cluster Sum of Squares") +
+#   theme_minimal()
+# print(elbow_plot)
+# 
+# # Perform k-prototypes clustering with optimal k=4 (based on elbow plot)
+# set.seed(123)
+# kproto_result <- kproto(X, k = 4, nstart = 10, verbose=FALSE)
+# 
+# # Add cluster assignments to data
+# data_K$Cluster <- kproto_result$cluster
+# 
+# # Analyze cluster characteristics
+# cluster_summary <- data_K %>%
+#   group_by(Cluster) %>%
+#   summarise(
+#     Count = n(),
+#     Age_Mean = round(mean(Age), 1),
+#     BMI_Mean = round(mean(BMI), 1),
+#     Fat_Percentage_Mean = round(mean(Fat_Percentage), 1),
+#     Calories_Mean = round(mean(Calories_Burned), 0),
+#     Duration_Mean = round(mean(Session_Duration..hours.), 2),
+#     Active_Pct = round(mean(Activity == 1) * 100, 1),
+#     Most_Common_Workout = names(which.max(table(Workout_Type))),
+#     Avg_Experience = round(mean(as.numeric(Experience_Level)), 2)
+#   )
+
+# # Print summary statistics
+# print("Cluster Summary:")
+# print(cluster_summary)
+
+
+
+```
+
+
+
+
+```{r, fig.height=2.5, fig.cap="Cluster Visualization using PCA"}
+
+# # Visualize clusters using PCA for numerical variables
+# pca_data <- prcomp(data_scaled[num_vars], scale = TRUE)
+# pca_coords <- as.data.frame(pca_data$x[,1:2])
+# pca_coords$Cluster <- factor(kproto_result$cluster)
+# 
+# # Create PCA plot
+# cluster_plot <- ggplot(pca_coords, aes(x = PC1, y = PC2, color = Cluster)) +
+#   geom_point(alpha = 0.6) +
+#   labs(title = "",
+#        x = "First Principal Component",
+#        y = "Second Principal Component") +
+#   theme_minimal()
+# print(cluster_plot)
+# 
+# # Save cluster assignments
+# data_K$Cluster <- kproto_result$cluster
+```
+
+
+```{r, fig.height=2.3, fig.width=3, fig.cap="K-Prototype Clustering", message=FALSE}
+
+# Read and prepare the data
+data_K <- read.csv("gym_members_updated.csv")
+
+# Convert categorical variables to factors
+data_K$Workout_Type <- as.factor(data_K$Workout_Type)
+data_K$Gender <- as.factor(data_K$Gender)
+data_K$Activity <- as.factor(data_K$Activity)
+data_K$Experience_Level <- as.factor(data_K$Experience_Level)
+
+# Select numerical variables for scaling
+num_vars <- c("Age", "Weight..kg.", "Height..m.", "Max_BPM", "Avg_BPM", 
+              "Resting_BPM", "Session_Duration..hours.", "Calories_Burned",
+              "Fat_Percentage", "Water_Intake..liters.", "BMI")
+
+# Scale numerical variables
+data_scaled <- data_K
+data_scaled[num_vars] <- scale(data_K[num_vars])
+
+# Prepare data for kproto
+X <- data_scaled[c(num_vars, "Workout_Type", "Gender", "Activity", "Experience_Level")]
+
+
+kproto_cost_file <- "rds/kproto_costs.rds"
+
+if (file.exists(kproto_cost_file)) {
+  message("Loading previously saved elbow costs...\n")
+  cost <- readRDS(kproto_cost_file)
+} else {
+  message("No saved elbow costs found. Running elbow method...\n")
+  set.seed(123)
+  cost <- numeric(10)
+  for (k in 1:10) {
+    kp <- kproto(X, k = k, nstart = 5, verbose = FALSE)
+    cost[k] <- kp$tot.withinss
+  }
+  saveRDS(cost, kproto_cost_file)
+  message("Elbow costs saved to file.\n")
+}
+
+
+# Plot elbow curve
+elbow_plot <- ggplot(data.frame(k = 1:10, cost = cost), aes(x = k, y = cost)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Elbow Method for Optimal k",
+       x = "Number of Clusters (k)",
+       y = "Total Within-Cluster Sum of Squares") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 8),  # General text size
+    plot.title = element_text(size = 10, hjust = 0.5),  # Title text size
+  )
+  
+print(elbow_plot)
+
+# Perform k-prototypes clustering with optimal k=4 (based on elbow plot)
+set.seed(123)
+kproto_result <- kproto(X, k = 4, nstart = 10, verbose=FALSE)
+
+# Add cluster assignments to data
+data_K$Cluster <- kproto_result$cluster
+
+# Analyze cluster characteristics
+cluster_summary <- data_K %>%
+  group_by(Cluster) %>%
+  summarise(
+    Count = n(),
+    Age_Mean = round(mean(Age), 1),
+    BMI_Mean = round(mean(BMI), 1),
+    Fat_Percentage_Mean = round(mean(Fat_Percentage), 1),
+    Calories_Mean = round(mean(Calories_Burned), 0),
+    Duration_Mean = round(mean(Session_Duration..hours.), 2),
+    Active_Pct = round(mean(Activity == 1) * 100, 1),
+    Most_Common_Workout = names(which.max(table(Workout_Type))),
+    Avg_Experience = round(mean(as.numeric(Experience_Level)), 2)
+  )
+
+# # Print summary statistics
+# print("Cluster Summary:")
+# print(cluster_summary)
+
+
+# Visualize clusters using PCA for numerical variables
+pca_data <- prcomp(data_scaled[num_vars], scale = TRUE)
+pca_coords <- as.data.frame(pca_data$x[,1:2])
+pca_coords$Cluster <- factor(kproto_result$cluster)
+
+# Create PCA plot
+cluster_plot <- ggplot(pca_coords, aes(x = PC1, y = PC2, color = Cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Cluster Visualization using PCA",
+       x = "First Principal Component",
+       y = "Second Principal Component") +
+  theme_minimal() + 
+  theme(
+    text = element_text(size = 8),  # General text size
+    plot.title = element_text(size = 10, hjust = 0.5),  # Title text size
+  )
+  
+print(cluster_plot)
+
+# Save cluster assignments
+data_K$Cluster <- kproto_result$cluster
+
+
+```
+
+
+```{r}
+
+# # Calculate and print categorical distributions for each cluster
+# cat("\nCategorical Distributions by Cluster:\n\n")
+# 
+# # Workout Type distribution
+# cat("Workout Type Distribution:\n")
+# print(table(data_K$Cluster, data_K$Workout_Type))
+# cat("\n")
+# 
+# # Gender distribution
+# cat("Gender Distribution:\n")
+# print(table(data_K$Cluster, data_K$Gender))
+# cat("\n")
+# 
+# # Experience Level distribution
+# cat("Experience Level Distribution:\n")
+# print(table(data_K$Cluster, data_K$Experience_Level))
+# cat("\n")
+# 
+# # Activity distribution
+# cat("Activity Distribution:\n")
+# print(table(data_K$Cluster, data_K$Activity))
+```
+
+
+
+
+Gym members are grouped into four distinct clusters based on both numerical and categorical features.
+
+- Cluster 1 (red): Members in this group are more centralized, representing individuals with moderate values across all measured features, indicating balanced fitness levels and workout habits.
+
+- Cluster 2 (green): This group is more distinct and spread out along the first principal component, suggesting members with relatively higher numerical values like BMI, Calories Burned, or workout metrics.
+
+- Cluster 3 (blue): Members in this cluster exhibit more compact positioning, likely corresponding to individuals with moderate-to-low activity levels and smaller feature variations.
+
+- Cluster 4 (purple): This group is spread upward on the second principal component, indicating individuals with features (workout duration, BPM) that separate them from other clusters, possibly reflecting specific workout or activity traits.
+
+
+## Hierarchical clustering heatmap and dendogram
+
+
+```{r heatmap, fig.height=2.5, fig.width=6, message=FALSE, warning=FALSE}
+library(ComplexHeatmap)
+library(circlize)
+
+# Aggregate the data by cluster
+cluster_summary <- aggregate(scaled_data, by = list(Cluster = kmeans_result$cluster), mean)
+cluster_summary_matrix <- as.matrix(cluster_summary[, -1])  # Remove the cluster column for matrix format
+
+Heatmap(cluster_summary_matrix,
+        name = "Average Value",
+        row_names_side = "left", 
+        column_names_gp = gpar(fontsize = 7),  # Adjust font size
+        row_title = "Clusters", 
+        column_title = "Features",
+        col = colorRamp2(c(-3, 0, 3), c("blue", "white", "red")))
+
+```
+
+From the heatmap analysis, we observe the following patterns across the clusters: 
+
+- Cluster 1 seems to have active members as calories_burned and water_intake_liters have above average values. While Fat_Percentage are below average fat percentage. 
+
+- Cluster 2 includes members with higher body weight and BMI but moderate-to-low activity levels. 
+
+- Cluster 3 represents members with lower body weight, calories burned and BMI. But moderate fat percentage, which suggests they are fresh members with low physical activity. 
+
+
+# Conclusion
+
+Using Multidimensional Scaling (MDS), we reduced the gym members' fitness data into a 2D space, revealing clear patterns and relationships among individuals. MDS effectively visualized the data and demonstrated that key variables such as `Calories Burned`,`Session Duration`, `BMI`, and `Water Intake` contributed most to the observed variance. It also validated the underlying structure of the data, with members forming well-defined groups based on their fitness metrics.
+
+The Clustering Analysis further segmented the gym members into three distinct groups. Cluster 1 included `active individuals with above-average Calories Burned and Water Intake, as well as below-average Fat Percentage, indicating high fitness levels`. Cluster 2 represented `members with higher BMI and Weight, but moderate-to-low activity levels, suggesting the need for increased workout intensity`. Cluster 3 comprised `less active or new members with lower Calories Burned, BMI, and Weight, but moderate Fat Percentage`, highlighting an opportunity for improvement through consistent activity.
+
+In conclusion, the analysis shows that individual physiological factors and workout metrics, particularly Calories Burned, Session Duration, and Water Intake, play a significant role in fitness outcomes. MDS and clustering techniques provided actionable insights that can help tailor fitness strategies to the needs of each group, improving overall health and performance.
+
+# References
